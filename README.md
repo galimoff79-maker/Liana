@@ -1,77 +1,79 @@
-# ПриватЧат — Приватный мессенджер для двоих
+# ПриватЧат — Private Messenger for Two
 
-Полноценный приватный веб-мессенджер для общения двух пользователей. Поддержка iPhone, Android и Windows. PWA с push-уведомлениями.
+Production-ready private web messenger for two users. Full support for iPhone, Android, and Windows. PWA with push notifications.
 
 ---
 
-## 📋 Возможности
+## ✅ Implemented Features
 
-### Основной функционал
-- ✅ Регистрация / Вход / Logout
-- ✅ Invite-система (только 2 пользователя)
-- ✅ Текстовые сообщения с emoji
-- ✅ Ответы (reply) на сообщения
-- ✅ Редактирование сообщений
-- ✅ Удаление (у себя / у обоих)
-- ✅ Реакции (❤️ 👍 😂 😮 😢 🔥 🎉)
-- ✅ Закрепление сообщений
-- ✅ Статусы: отправлено ✓ / доставлено ✓✓ / прочитано ✓✓
-- ✅ Индикатор "печатает..."
-- ✅ Online / Offline статус
-- ✅ Поиск по истории
+### Core Messaging
+- ✅ Real-time messaging via WebSocket
+- ✅ Messages stored in PostgreSQL (source of truth)
+- ✅ Reply to messages
+- ✅ Edit messages
+- ✅ Delete for me / Delete for all
+- ✅ Reactions (❤️ 👍 😂 😮 😢 🔥 🎉)
+- ✅ Pin messages
+- ✅ Status: sent ✓ / delivered ✓✓ / read ✓✓
+- ✅ Typing indicator
+- ✅ Online / Offline status
+- ✅ Search messages
 
-### Медиа
-- ✅ Отправка фотографий (с preview)
-- ✅ Отправка видео (с встроенным плеером)
-- ✅ Отправка файлов (PDF, DOC, ZIP и др.)
-- ✅ Голосовые сообщения
-- ✅ Камера (мобильные устройства)
-- ✅ Полноэкранный просмотр изображений с zoom
-- ✅ Скачивание файлов
+### Media & Files
+- ✅ Photo upload (server-side storage)
+- ✅ Video upload with streaming
+- ✅ File upload (PDF, DOC, ZIP, etc.)
+- ✅ Voice messages (iOS Safari compatible)
+- ✅ Camera capture (mobile)
+- ✅ Full-screen image viewer with zoom
+- ✅ File download
+- ✅ Automatic file expiration (configurable)
 
-### PWA и Push
+### Authentication & Security
+- ✅ Cookie-based authentication (HttpOnly, Secure, SameSite)
+- ✅ Session management with revocation
+- ✅ Password hashing (bcrypt)
+- ✅ Invite system (max 2 users)
+- ✅ Rate limiting ready
+- ✅ File access control (not public)
+- ✅ Path traversal protection
+- ✅ MIME type validation
+- ✅ Streaming file uploads (no RAM overload)
+
+### PWA & Push
 - ✅ Progressive Web App
-- ✅ Установка на домашний экран (iPhone/Android)
-- ✅ Push-уведомления (Web Push + VAPID)
-- ✅ Service Worker с кэшированием
+- ✅ Install to home screen (iPhone/Android)
+- ✅ Push notifications (Web Push + VAPID)
+- ✅ Service Worker with caching
 - ✅ Standalone mode
+- ✅ iOS 16.4+ push support
 
-### Безопасность
-- ✅ HTTPS (Let's Encrypt)
-- ✅ Безопасное хэширование паролей (bcrypt)
-- ✅ JWT токены
-- ✅ Защита от CSRF, XSS, SQL injection
-- ✅ Rate limiting
-- ✅ Security headers (CSP, HSTS, X-Frame-Options)
-- ✅ Файлы не публичны — проверка прав доступа
-- ✅ Случайные имена загружаемых файлов
-- ✅ Защита от path traversal
+### UI/UX
+- ✅ Dark / Light / System theme
+- ✅ Responsive design (mobile-first)
+- ✅ iOS Safe Area support
+- ✅ Virtual keyboard handling
+- ✅ Modern messenger-style UI
 
-### Интерфейс
-- ✅ Dark / Light / System тема
-- ✅ Responsive дизайн (mobile-first)
-- ✅ Оптимизация под iPhone (Safe Area, Dynamic Island)
-- ✅ Корректная работа с виртуальной клавиатурой
-- ✅ Современный UI в стиле мессенджера
-
-### Инфраструктура
+### Infrastructure
 - ✅ Docker + Docker Compose
-- ✅ PostgreSQL
-- ✅ Nginx (reverse proxy)
-- ✅ WebSocket (real-time)
-- ✅ Автоматическое удаление старых файлов
-- ✅ Backup / Restore скрипты
+- ✅ PostgreSQL (internal network)
+- ✅ Nginx reverse proxy
+- ✅ WebSocket support
+- ✅ HTTPS ready (Let's Encrypt)
+- ✅ Health checks
+- ✅ Automatic file cleanup
 
 ---
 
-## 🚀 Быстрый запуск (Development)
+## 🚀 Quick Start (Development)
 
-### Требования
+### Requirements
 - Python 3.11+
 - Node.js 20+
-- PostgreSQL 16+ (или Docker)
+- PostgreSQL 16+
 
-### 1. Клонирование
+### 1. Clone
 ```bash
 git clone <repository-url>
 cd privatchat
@@ -84,22 +86,21 @@ python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
-# Настроить .env
+# Configure .env
 cp ../.env.example .env
-# Отредактировать .env
+# Edit .env with your values
 
-# Запустить
+# Run
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 ### 3. Frontend
 ```bash
-cd frontend  # (или корень проекта)
 npm install
 npm run dev
 ```
 
-### 4. Открыть
+### 4. Open
 ```
 http://localhost:3000
 ```
@@ -108,25 +109,24 @@ http://localhost:3000
 
 ## 🐳 Docker (Production)
 
-### 1. Подготовка
+### 1. Prepare
 ```bash
 cp .env.example .env
 ```
 
-Отредактировать `.env`:
+Edit `.env`:
 ```env
-SECRET_KEY=<сгенерировать: python -c "import secrets; print(secrets.token_urlsafe(64))">
-DB_PASSWORD=<надёжный_пароль>
+SECRET_KEY=<generate: python -c "import secrets; print(secrets.token_urlsafe(64))">
+DB_PASSWORD=<strong_password>
 FRONTEND_URL=https://chat.example.com
-DOMAIN=chat.example.com
 ```
 
-### 2. Запуск
+### 2. Start
 ```bash
 docker compose up -d
 ```
 
-### 3. Проверка
+### 3. Check
 ```bash
 docker compose ps
 docker compose logs -f backend
@@ -134,87 +134,74 @@ docker compose logs -f backend
 
 ---
 
-## 🌐 Настройка домена и HTTPS
+## 🌐 Domain & HTTPS
 
 ### 1. DNS
-Направить A-запись `chat.example.com` на IP вашего VPS.
+Point A record `chat.example.com` to your VPS IP.
 
 ### 2. Let's Encrypt
 ```bash
-# Установить certbot
 apt install certbot
-
-# Получить сертификат
 certbot certonly --standalone -d chat.example.com
 
-# Скопировать в nginx
+# Copy certificates
 cp /etc/letsencrypt/live/chat.example.com/fullchain.pem nginx/ssl/
 cp /etc/letsencrypt/live/chat.example.com/privkey.pem nginx/ssl/
 ```
 
-### 3. Включить HTTPS в nginx.conf
-Раскомментировать блок HTTPS в `nginx/nginx.conf` и перезапустить:
+### 3. Restart
 ```bash
 docker compose restart nginx
 ```
 
-### 4. Автоматическое обновление
-```bash
-# Добавить в crontab
-0 0 1 * * certbot renew --quiet && docker compose restart nginx
-```
+---
+
+## 📱 iPhone Installation
+
+1. Open Safari → `https://chat.example.com`
+2. Register / Login
+3. Tap Share button (⬆️)
+4. Select "Add to Home Screen"
+5. Confirm
+
+### Push Notifications (iOS 16.4+)
+- Must be added to home screen first
+- Settings → ПриватЧат → Notifications → Allow
 
 ---
 
-## 📱 Установка на iPhone
+## 📱 Android Installation
 
-1. Открыть Safari → `https://chat.example.com`
-2. Зарегистрироваться / Войти
-3. Нажать кнопку «Поделиться» (⬆️)
-4. Выбрать «На экран «Домой»»
-5. Подтвердить
-
-Приложение откроется в полноэкранном режиме без адресной строки.
-
-### Push-уведомления на iPhone
-- Требуется iOS 16.4+
-- После добавления на экран: Настройки → ПриватЧат → Уведомления → Разрешить
-- Приложение запросит разрешение при первом входе
-
----
-
-## 📱 Установка на Android
-
-1. Открыть Chrome → `https://chat.example.com`
-2. Зарегистрироваться / Войти
-3. Chrome предложит «Добавить на главный экран»
-4. Или: меню (⋮) → «Установить приложение»
+1. Open Chrome → `https://chat.example.com`
+2. Register / Login
+3. Chrome will prompt "Add to home screen"
+4. Or: menu (⋮) → "Install app"
 
 ---
 
 ## 💻 Windows
 
-Просто открыть в браузере:
+Open in browser:
 ```
 https://chat.example.com
 ```
 
-Поддерживаются: Chrome, Edge, Firefox.
+Supported: Chrome, Edge, Firefox.
 
-Для установки как приложение:
-- Chrome: адресная строка → иконка установки
-- Edge: меню → Приложения → Установить этот сайт как приложение
+Install as app:
+- Chrome: address bar → install icon
+- Edge: menu → Apps → Install this site as an app
 
 ---
 
-## 🔔 Push-уведомления
+## 🔔 Push Notifications
 
-### Генерация VAPID ключей
+### Generate VAPID keys
 ```bash
 npx web-push generate-vapid-keys
 ```
 
-Добавить в `.env`:
+Add to `.env`:
 ```env
 VAPID_PUBLIC_KEY=<public_key>
 VAPID_PRIVATE_KEY=<private_key>
@@ -226,60 +213,52 @@ VAPID_PRIVATE_KEY=<private_key>
 
 ### Linux/Mac
 ```bash
-# Backup
 chmod +x scripts/backup.sh
 ./scripts/backup.sh
 
-# Restore
-chmod +x scripts/restore.sh
 ./scripts/restore.sh privatchat_backup_20240101_120000
 ```
 
 ### Windows
 ```powershell
-# Backup
 .\scripts\backup.ps1
-
-# Restore
 .\scripts\restore.ps1 -BackupName "privatchat_backup_20240101_120000"
 ```
 
 ---
 
-## 🏗 Структура проекта
+## 🏗 Project Structure
 
 ```
 privatchat/
 ├── backend/
 │   ├── app/
-│   │   └── main.py          # FastAPI приложение
+│   │   └── main.py          # FastAPI application
 │   ├── Dockerfile
 │   └── requirements.txt
-├── frontend/                 # (корень проекта)
-│   ├── src/
-│   │   ├── App.tsx           # Главный компонент
-│   │   ├── main.tsx          # Точка входа
-│   │   ├── index.css         # Стили
-│   │   ├── types/index.ts    # TypeScript типы
-│   │   ├── stores/index.ts   # Zustand store
-│   │   └── components/
-│   │       ├── AuthScreen.tsx
-│   │       ├── ChatView.tsx
-│   │       ├── MessageBubble.tsx
-│   │       ├── SettingsView.tsx
-│   │       └── MediaViewer.tsx
-│   ├── public/
-│   │   ├── manifest.json     # PWA manifest
-│   │   └── sw.js             # Service Worker
-│   ├── Dockerfile
-│   └── index.html
+├── src/                      # Frontend (React)
+│   ├── App.tsx
+│   ├── components/
+│   │   ├── AuthScreen.tsx
+│   │   ├── ChatView.tsx
+│   │   ├── MessageBubble.tsx
+│   │   ├── SettingsView.tsx
+│   │   └── MediaViewer.tsx
+│   ├── services/
+│   │   ├── api.ts           # API client
+│   │   ├── websocket.ts     # WebSocket service
+│   │   └── push.ts          # Push notifications
+│   ├── stores/index.ts      # Zustand store
+│   └── types/index.ts
+├── public/
+│   ├── manifest.json        # PWA manifest
+│   ├── sw.js                # Service Worker
+│   └── icon.svg
 ├── nginx/
 │   └── nginx.conf
 ├── scripts/
 │   ├── backup.sh
-│   ├── restore.sh
-│   ├── backup.ps1
-│   └── restore.ps1
+│   └── restore.sh
 ├── docker-compose.yml
 ├── .env.example
 └── README.md
@@ -289,104 +268,76 @@ privatchat/
 
 ## 🔧 Environment Variables
 
-| Переменная | Описание | По умолчанию |
+| Variable | Description | Default |
 |---|---|---|
-| `DATABASE_URL` | PostgreSQL connection string | `postgresql://...` |
-| `SECRET_KEY` | JWT secret (обязательно менять!) | random |
-| `DB_PASSWORD` | Пароль PostgreSQL | `privatchat_secret` |
-| `VAPID_PUBLIC_KEY` | VAPID public key для push | — |
-| `VAPID_PRIVATE_KEY` | VAPID private key для push | — |
-| `UPLOAD_DIR` | Директория для файлов | `./uploads` |
-| `FILE_RETENTION_DAYS` | Хранение файлов (дни) | `30` |
-| `MAX_FILE_SIZE_MB` | Макс. размер файла | `500` |
-| `FRONTEND_URL` | URL фронтенда | `http://localhost:3000` |
+| `DATABASE_URL` | PostgreSQL connection | `postgresql://...` |
+| `SECRET_KEY` | JWT secret (REQUIRED, min 32 chars) | — |
+| `DB_PASSWORD` | PostgreSQL password | — |
+| `VAPID_PUBLIC_KEY` | VAPID public key for push | — |
+| `VAPID_PRIVATE_KEY` | VAPID private key for push | — |
+| `FILE_RETENTION_DAYS` | File storage duration | `30` |
+| `MAX_FILE_SIZE_MB` | Max file size | `500` |
+| `FRONTEND_URL` | Frontend URL | `http://localhost:3000` |
 
 ---
 
-## 🗄 Database
+## 🔒 Security
 
-### Таблицы
-- `users` — пользователи
-- `sessions` — сессии/токены
-- `messages` — сообщения
-- `attachments` — вложения
-- `invites` — коды-приглашения
-- `push_subscriptions` — push подписки
+### Implemented
+- ✅ HTTPS (production)
+- ✅ HttpOnly Secure SameSite cookies
+- ✅ Password hashing (bcrypt)
+- ✅ Session management with revocation
+- ✅ File access control
+- ✅ Path traversal protection
+- ✅ MIME validation
+- ✅ Streaming uploads
+- ✅ WebSocket authentication
+- ✅ CORS (minimal)
+- ✅ Security headers (CSP, HSTS, X-Frame-Options)
 
-### Миграции (Alembic)
-```bash
-cd backend
-alembic init alembic
-alembic revision --autogenerate -m "initial"
-alembic upgrade head
-```
-
----
-
-## 🔒 Безопасность
-
-### Реализовано
-- HTTPS (обязательно для production)
-- Secure cookies (HttpOnly, SameSite, Secure)
-- CSRF protection
-- XSS protection (React по умолчанию + CSP)
-- SQL injection protection (SQLAlchemy ORM)
-- Rate limiting
-- Brute-force protection
-- Безопасное хэширование паролей (bcrypt)
-- Security headers
-- Content Security Policy
-- CORS
-- WebSocket authentication (JWT)
-- Проверка прав доступа к файлам
-- Проверка размера файлов
-- Проверка MIME типов
-- Защита от path traversal
-- Случайные имена файлов
-- Запрет исполнения загруженных файлов
-
-### Рекомендации
-- Менять `SECRET_KEY` перед production
-- Использовать надёжный пароль для PostgreSQL
-- Обновлять сертификаты Let's Encrypt
-- Регулярно делать backup
-- Обновлять зависимости
+### Recommendations
+- Change `SECRET_KEY` before production
+- Use strong PostgreSQL password
+- Renew Let's Encrypt certificates
+- Regular backups
+- Update dependencies
 
 ---
 
-## 📋 Известные ограничения браузеров
+## 📋 Browser Limitations
 
 ### iOS Safari
-- Web Push работает только после добавления PWA на домашний экран (iOS 16.4+)
-- MediaRecorder имеет ограниченную поддержку (iOS 14.3+)
-- Нет фоновой работы WebSocket (при сворачивании)
-- Ограничение на размер загружаемых файлов (~500MB)
+- Web Push only after adding PWA to home screen (iOS 16.4+)
+- MediaRecorder support limited (iOS 14.3+)
+- No background WebSocket (when minimized)
+- File upload size limit (~500MB)
 
 ### Android Chrome
-- Полная поддержка всех функций
-- Push работает без ограничений
+- Full feature support
+- Push works without restrictions
 
 ### Desktop (Chrome/Edge/Firefox)
-- Полная поддержка всех функций
-- Push работает через Service Worker
+- Full feature support
+- Push via Service Worker
 
 ---
 
-## 🔮 Планируемые улучшения (v2)
+## 🔮 Future Improvements (v2)
 
 - End-to-End Encryption (E2EE)
-- Голосовые звонки (WebRTC)
-- Видеозвонки
-- Групповые чаты
-- Несколько чатов
-- Стикерпаки
-- GIF поиск
-- Исчезающие сообщения
-- Двухфакторная аутентификация
-- Экспорт истории чата
+- Voice calls (WebRTC)
+- Video calls
+- Group chats
+- Multiple chats
+- Sticker packs
+- GIF search
+- Disappearing messages
+- Two-factor authentication
+- Chat history export
 
 ---
 
-## 📄 Лицензия
+## 📄 License
 
 Private use only.

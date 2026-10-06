@@ -1,9 +1,11 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { format, isToday, isYesterday, parseISO, isSameDay } from 'date-fns';
+import { format, isToday, isYesterday, parseISO } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import { Send, Paperclip, Mic, Smile, X, ArrowDown, Search, Settings, Phone, Video, MoreVertical, Camera, Pin } from 'lucide-react';
 import { useStore } from '../stores';
 import MessageBubble from './MessageBubble';
+import { api } from '../services/api';
+import { wsService } from '../services/websocket';
 import type { Message, Attachment } from '../types';
 import EmojiPicker from 'emoji-picker-react';
 
@@ -13,13 +15,14 @@ export default function ChatView() {
     typingPartner, connectionStatus, showEmojiPicker,
     setReplyingTo, setEditingMessage, setShowEmojiPicker,
     addMessage, updateMessage, deleteMessage, markAsRead,
-    setActiveView, setMediaViewer
+    setActiveView, setMediaViewer, setMessages
   } = useStore();
 
   const [text, setText] = useState('');
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [isLoading, setIsLoading] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -29,6 +32,23 @@ export default function ChatView() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordingChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<number | null>(null);
+  const typingTimeoutRef = useRef<number | null>(null);
+
+  // Load messages from server
+  useEffect(() => {
+    const loadMessages = async () => {
+      try {
+        setIsLoading(true);
+        const serverMessages = await api.getMessages(50);
+        setMessages(serverMessages);
+      } catch (error) {
+        console.error('Failed to load messages:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    loadMessages();
+  }, [setMessages]);
 
   // Auto scroll
   const scrollToBottom = useCallback((smooth = true) => {
@@ -37,27 +57,18 @@ export default function ChatView() {
 
   useEffect(() => { scrollToBottom(false); }, []);
 
-  // Handle visual viewport (keyboard) on mobile
-  useEffect(() => {
-    const vv = window.visualViewport;
-    if (!vv) return;
-    const handler = () => {
-      // When keyboard opens, scroll to bottom
-      if (document.activeElement?.tagName === 'TEXTAREA' || document.activeElement?.tagName === 'INPUT') {
-        setTimeout(() => scrollToBottom(), 100);
-      }
-    };
-    vv.addEventListener('resize', handler);
-    return () => vv.removeEventListener('resize', handler);
-  }, [scrollToBottom]);
-
   // Mark messages as read when visible
   useEffect(() => {
-    const unread = messages.filter(m => m.senderId !== currentUser?.id && !m.readBy.includes(currentUser?.id || ''));
+    const unread = messages.filter(m => 
+      m.senderId !== currentUser?.id && 
+      !m.readBy.includes(currentUser?.id || '')
+    );
     if (unread.length > 0) {
-      markAsRead(unread.map(m => m.id));
+      const messageIds = unread.map(m => m.id);
+      api.markAsRead(messageIds).catch(console.error);
+      markAsRead(messageIds);
     }
-  }, [messages, currentUser]);
+  }, [messages, currentUser, markAsRead]);
 
   // Scroll detection
   useEffect(() => {
@@ -71,82 +82,76 @@ export default function ChatView() {
     return () => container.removeEventListener('scroll', handleScroll);
   }, []);
 
+  // Handle visual viewport (keyboard) on mobile
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const handler = () => {
+      if (document.activeElement?.tagName === 'TEXTAREA' || document.activeElement?.tagName === 'INPUT') {
+        setTimeout(() => scrollToBottom(), 100);
+      }
+    };
+    vv.addEventListener('resize', handler);
+    return () => vv.removeEventListener('resize', handler);
+  }, [scrollToBottom]);
+
   // Send message
-  const sendMessage = () => {
+  const sendMessage = async () => {
     if (!text.trim() && !editingMessage) return;
 
     if (editingMessage) {
-      updateMessage(editingMessage.id, { text: text.trim(), edited: true, editedAt: new Date().toISOString() });
-      setEditingMessage(null);
+      try {
+        await api.editMessage(editingMessage.id, text.trim());
+        updateMessage(editingMessage.id, { text: text.trim(), edited: true, editedAt: new Date().toISOString() });
+        setEditingMessage(null);
+      } catch (error) {
+        console.error('Failed to edit message:', error);
+      }
     } else {
-      const msg: Message = {
-        id: crypto.randomUUID(),
-        chatId: 'main',
-        senderId: currentUser!.id,
-        text: text.trim(),
-        timestamp: new Date().toISOString(),
-        edited: false,
-        deleted: false,
-        deletedForAll: false,
-        reactions: {},
-        attachments: [],
-        readBy: [],
-        deliveredTo: [currentUser!.id],
-        pinned: false,
-        replyTo: replyingTo?.id,
-      };
-      addMessage(msg);
-      setReplyingTo(null);
-
-      // Simulate partner response for demo
-      simulatePartnerResponse(msg);
+      try {
+        const response = await api.sendMessage(text.trim(), replyingTo?.id);
+        // Message will be added via WebSocket, but we can add it optimistically
+        const msg: Message = {
+          id: response.id,
+          chatId: 'main',
+          senderId: currentUser!.id,
+          text: text.trim(),
+          timestamp: response.timestamp,
+          edited: false,
+          deleted: false,
+          deletedForAll: false,
+          reactions: {},
+          attachments: [],
+          readBy: [],
+          deliveredTo: [currentUser!.id],
+          pinned: false,
+          replyTo: replyingTo?.id,
+        };
+        addMessage(msg);
+        setReplyingTo(null);
+      } catch (error) {
+        console.error('Failed to send message:', error);
+      }
     }
     setText('');
     setShowEmojiPicker(false);
     scrollToBottom();
   };
 
-  // Simulate partner typing and response (demo)
-  const simulatePartnerResponse = (sentMsg: Message) => {
-    if (!partner?.id) return;
-    // Simulate delivery
-    setTimeout(() => {
-      useStore.getState().updateMessage(sentMsg.id, { deliveredTo: [currentUser!.id, partner.id] });
-    }, 500);
-
-    // Simulate read after 2s
-    setTimeout(() => {
-      useStore.getState().updateMessage(sentMsg.id, { readBy: [currentUser!.id, partner.id] });
-    }, 2000);
-
-    // Simulate partner typing and reply (demo)
-    const replies = ['❤️', 'Понял!', 'Хорошо 👍', '😊', 'Ок!', 'Интересно...', 'Согласен(а)'];
-    if (Math.random() > 0.5) {
-      setTimeout(() => {
-        useStore.getState().setTypingPartner(true);
-      }, 1500);
-      setTimeout(() => {
-        useStore.getState().setTypingPartner(false);
-        const replyMsg: Message = {
-          id: crypto.randomUUID(),
-          chatId: 'main',
-          senderId: partner.id,
-          text: replies[Math.floor(Math.random() * replies.length)],
-          timestamp: new Date().toISOString(),
-          edited: false,
-          deleted: false,
-          deletedForAll: false,
-          reactions: {},
-          attachments: [],
-          readBy: [currentUser!.id],
-          deliveredTo: [currentUser!.id, partner.id],
-          pinned: false,
-          replyTo: sentMsg.id,
-        };
-        useStore.getState().addMessage(replyMsg);
-        scrollToBottom();
-      }, 3000 + Math.random() * 2000);
+  // Handle typing indicator
+  const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setText(e.target.value);
+    
+    // Send typing indicator with debounce
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
     }
+    
+    wsService.sendTyping(true);
+    
+    typingTimeoutRef.current = window.setTimeout(() => {
+      wsService.sendTyping(false);
+    }, 2000);
   };
 
   // Handle Enter key
@@ -158,39 +163,18 @@ export default function ChatView() {
   };
 
   // File handling
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files) return;
-    Array.from(files).forEach(file => {
-      const url = URL.createObjectURL(file);
-      const type = file.type.startsWith('image/') ? 'image' :
-                   file.type.startsWith('video/') ? 'video' : 'file';
-      const attachment: Attachment = {
-        id: crypto.randomUUID(),
-        type: type as Attachment['type'],
-        name: file.name,
-        url,
-        size: file.size,
-        mimeType: file.type,
-        expired: false,
-      };
-      const msg: Message = {
-        id: crypto.randomUUID(),
-        chatId: 'main',
-        senderId: currentUser!.id,
-        text: '',
-        timestamp: new Date().toISOString(),
-        edited: false,
-        deleted: false,
-        deletedForAll: false,
-        reactions: {},
-        attachments: [attachment],
-        readBy: [],
-        deliveredTo: [currentUser!.id],
-        pinned: false,
-      };
-      addMessage(msg);
-    });
+    
+    for (const file of Array.from(files)) {
+      try {
+        const response = await api.uploadFile(file);
+        // File message will come via WebSocket
+      } catch (error) {
+        console.error('Failed to upload file:', error);
+      }
+    }
     e.target.value = '';
     scrollToBottom();
   };
@@ -198,8 +182,29 @@ export default function ChatView() {
   // Voice recording
   const startRecording = async () => {
     try {
+      // Check supported MIME types for iOS Safari compatibility
+      const mimeTypes = [
+        'audio/mp4',
+        'audio/aac',
+        'audio/webm',
+        'audio/ogg'
+      ];
+      
+      let selectedMime = '';
+      for (const mime of mimeTypes) {
+        if (MediaRecorder.isTypeSupported(mime)) {
+          selectedMime = mime;
+          break;
+        }
+      }
+      
+      if (!selectedMime) {
+        alert('Voice recording is not supported in this browser');
+        return;
+      }
+      
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: selectedMime });
       mediaRecorderRef.current = mediaRecorder;
       recordingChunksRef.current = [];
 
@@ -207,37 +212,18 @@ export default function ChatView() {
         if (e.data.size > 0) recordingChunksRef.current.push(e.data);
       };
 
-      mediaRecorder.onstop = () => {
-        const blob = new Blob(recordingChunksRef.current, { type: 'audio/webm' });
-        const url = URL.createObjectURL(blob);
-        const attachment: Attachment = {
-          id: crypto.randomUUID(),
-          type: 'voice',
-          name: 'Голосовое сообщение',
-          url,
-          size: blob.size,
-          mimeType: 'audio/webm',
-          duration: recordingTime,
-          expired: false,
-        };
-        const msg: Message = {
-          id: crypto.randomUUID(),
-          chatId: 'main',
-          senderId: currentUser!.id,
-          text: '',
-          timestamp: new Date().toISOString(),
-          edited: false,
-          deleted: false,
-          deletedForAll: false,
-          reactions: {},
-          attachments: [attachment],
-          readBy: [],
-          deliveredTo: [currentUser!.id],
-          pinned: false,
-          voiceDuration: recordingTime,
-        };
-        addMessage(msg);
-        scrollToBottom();
+      mediaRecorder.onstop = async () => {
+        const blob = new Blob(recordingChunksRef.current, { type: selectedMime });
+        
+        try {
+          // Upload voice message to server
+          const file = new File([blob], 'voice-message', { type: selectedMime });
+          await api.uploadFile(file);
+          // Message will come via WebSocket
+        } catch (error) {
+          console.error('Failed to upload voice message:', error);
+        }
+        
         stream.getTracks().forEach(t => t.stop());
       };
 
@@ -248,7 +234,7 @@ export default function ChatView() {
         setRecordingTime(t => t + 1);
       }, 1000);
     } catch (err) {
-      alert('Не удалось получить доступ к микрофону. Проверьте разрешения.');
+      alert('Unable to access microphone. Please check permissions.');
     }
   };
 
@@ -272,11 +258,16 @@ export default function ChatView() {
   };
 
   // Delete message
-  const handleDelete = (msg: Message, forAll: boolean) => {
+  const handleDelete = async (msg: Message, forAll: boolean) => {
     if (forAll) {
-      if (!confirm('Удалить сообщение у обоих?')) return;
+      if (!confirm('Delete message for everyone?')) return;
     }
-    deleteMessage(msg.id, forAll);
+    try {
+      await api.deleteMessage(msg.id, forAll);
+      deleteMessage(msg.id, forAll);
+    } catch (error) {
+      console.error('Failed to delete message:', error);
+    }
   };
 
   // Media click
@@ -287,8 +278,8 @@ export default function ChatView() {
   // Date grouping
   const getDateLabel = (dateStr: string) => {
     const date = parseISO(dateStr);
-    if (isToday(date)) return 'Сегодня';
-    if (isYesterday(date)) return 'Вчера';
+    if (isToday(date)) return 'Today';
+    if (isYesterday(date)) return 'Yesterday';
     return format(date, 'd MMMM yyyy', { locale: ru });
   };
 
@@ -315,6 +306,14 @@ export default function ChatView() {
     return `${m}:${String(s).padStart(2, '0')}`;
   };
 
+  if (isLoading) {
+    return (
+      <div className="h-full flex items-center justify-center" style={{ background: 'var(--bg-primary)' }}>
+        <div className="animate-pulse-slow" style={{ color: 'var(--text-muted)' }}>Loading...</div>
+      </div>
+    );
+  }
+
   return (
     <div className="h-full flex flex-col" style={{ background: 'var(--bg-primary)' }}>
       {/* Header */}
@@ -327,10 +326,10 @@ export default function ChatView() {
         </div>
         <div className="flex-1 min-w-0">
           <h2 className="font-semibold text-[15px] truncate" style={{ color: 'var(--text-primary)' }}>
-            {partner?.displayName || 'Партнёр'}
+            {partner?.displayName || 'Partner'}
           </h2>
           <p className="text-xs" style={{ color: typingPartner ? 'var(--accent)' : 'var(--text-muted)' }}>
-            {typingPartner ? 'печатает...' : connectionStatus === 'connected' ? 'в сети' : connectionStatus === 'connecting' ? 'подключение...' : 'не в сети'}
+            {typingPartner ? 'typing...' : connectionStatus === 'connected' ? 'online' : connectionStatus === 'connecting' ? 'connecting...' : 'offline'}
           </p>
         </div>
         <div className="flex items-center gap-1">
@@ -352,7 +351,7 @@ export default function ChatView() {
       {/* Connection status */}
       {connectionStatus !== 'connected' && (
         <div className="px-4 py-2 text-center text-xs" style={{ background: connectionStatus === 'connecting' ? 'var(--warning)' : 'var(--danger)', color: 'white' }}>
-          {connectionStatus === 'connecting' ? '🟡 Подключение...' : '🔴 Нет соединения'}
+          {connectionStatus === 'connecting' ? '🟡 Connecting...' : '🔴 No connection'}
         </div>
       )}
 
@@ -361,7 +360,7 @@ export default function ChatView() {
         <div className="px-3 py-2 border-b flex items-center gap-2" style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border)' }}>
           <input
             type="text"
-            placeholder="Поиск сообщений..."
+            placeholder="Search messages..."
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             className="flex-1 text-sm"
@@ -393,10 +392,9 @@ export default function ChatView() {
       {/* Messages */}
       <div ref={messagesContainerRef} className="flex-1 overflow-y-auto py-2">
         {filteredMessages ? (
-          // Search results
           <div className="px-3 space-y-1">
             <p className="text-xs text-center py-2" style={{ color: 'var(--text-muted)' }}>
-              Найдено: {filteredMessages.length}
+              Found: {filteredMessages.length}
             </p>
             {filteredMessages.map(msg => (
               <MessageBubble
@@ -412,7 +410,6 @@ export default function ChatView() {
             ))}
           </div>
         ) : (
-          // Normal view
           groupedMessages.map((group, gi) => (
             <div key={gi}>
               <div className="sticky top-0 z-10 flex justify-center py-2">
@@ -465,7 +462,7 @@ export default function ChatView() {
         <div className="flex items-center gap-2 px-4 py-2 border-t" style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border)' }}>
           <div className="flex-1 min-w-0">
             <p className="text-xs font-medium" style={{ color: 'var(--accent)' }}>
-              {editingMessage ? '✏️ Редактирование' : `↩️ Ответ ${replyingTo?.senderId === currentUser?.id ? 'себе' : partner?.displayName}`}
+              {editingMessage ? '✏️ Editing' : `↩️ Reply to ${replyingTo?.senderId === currentUser?.id ? 'yourself' : partner?.displayName}`}
             </p>
             <p className="text-xs truncate" style={{ color: 'var(--text-secondary)' }}>
               {editingMessage?.text || replyingTo?.text}
@@ -483,15 +480,14 @@ export default function ChatView() {
           <div className="recording-indicator" />
           <span className="text-sm font-mono" style={{ color: 'var(--danger)' }}>{formatTime(recordingTime)}</span>
           <div className="flex-1" />
-          <button onClick={cancelRecording} className="btn btn-secondary text-sm px-3 py-1.5">Отмена</button>
-          <button onClick={stopRecording} className="btn btn-primary text-sm px-3 py-1.5">Отправить</button>
+          <button onClick={cancelRecording} className="btn btn-secondary text-sm px-3 py-1.5">Cancel</button>
+          <button onClick={stopRecording} className="btn btn-primary text-sm px-3 py-1.5">Send</button>
         </div>
       )}
 
       {/* Input area */}
       {!isRecording && (
         <div className="flex items-end gap-2 px-3 sm:px-4 py-2 border-t" style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border)', paddingBottom: 'max(8px, var(--safe-bottom))' }}>
-          {/* Attach button */}
           <div className="relative">
             <button className="p-2 rounded-full hover:opacity-70" style={{ color: 'var(--text-secondary)' }} onClick={() => fileInputRef.current?.click()}>
               <Paperclip size={22} />
@@ -499,24 +495,21 @@ export default function ChatView() {
             <input ref={fileInputRef} type="file" multiple accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.zip,.txt" className="hidden" onChange={handleFileSelect} />
           </div>
 
-          {/* Camera button (mobile) */}
           <button className="p-2 rounded-full hover:opacity-70 mobile-only" style={{ color: 'var(--text-secondary)' }} onClick={() => cameraInputRef.current?.click()}>
             <Camera size={22} />
           </button>
           <input ref={cameraInputRef} type="file" accept="image/*,video/*" capture="environment" className="hidden" onChange={handleFileSelect} />
 
-          {/* Text input */}
           <div className="flex-1 relative">
             <textarea
               value={text}
-              onChange={e => setText(e.target.value)}
+              onChange={handleTextChange}
               onKeyDown={handleKeyDown}
-              placeholder="Сообщение..."
+              placeholder="Message..."
               rows={1}
               className="resize-none max-h-[120px] py-2.5"
               style={{ minHeight: '40px' }}
             />
-            {/* Emoji button */}
             <button
               className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-full hover:opacity-70"
               style={{ color: 'var(--text-muted)' }}
@@ -526,7 +519,6 @@ export default function ChatView() {
             </button>
           </div>
 
-          {/* Send / Mic */}
           {text.trim() ? (
             <button className="p-2 rounded-full" style={{ background: 'var(--accent)', color: 'white' }} onClick={sendMessage}>
               <Send size={20} />
@@ -546,7 +538,6 @@ export default function ChatView() {
             onEmojiClick={(emoji) => setText(prev => prev + emoji.emoji)}
             width="100%"
             height="350px"
-            
           />
         </div>
       )}

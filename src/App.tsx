@@ -1,12 +1,14 @@
 import { useEffect } from 'react';
 import { useStore } from './stores';
+import { api } from './services/api';
+import { wsService } from './services/websocket';
 import AuthScreen from './components/AuthScreen';
 import ChatView from './components/ChatView';
 import SettingsView from './components/SettingsView';
 import MediaViewer from './components/MediaViewer';
 
 export default function App() {
-  const { isAuthenticated, activeView, theme, setConnectionStatus } = useStore();
+  const { isAuthenticated, activeView, theme, setConnectionStatus, login, logout } = useStore();
 
   // Theme management
   useEffect(() => {
@@ -31,6 +33,41 @@ export default function App() {
     return () => mq.removeEventListener('change', handler);
   }, [theme]);
 
+  // Initialize WebSocket and load user data on mount
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const init = async () => {
+      try {
+        // Load user data from server
+        const [me, partner] = await Promise.all([
+          api.getMe(),
+          api.getPartner()
+        ]);
+
+        if (!me) {
+          logout();
+          return;
+        }
+
+        // Update store with server data
+        login(me, partner);
+
+        // Connect WebSocket
+        wsService.connect();
+      } catch (error) {
+        console.error('Failed to initialize:', error);
+        logout();
+      }
+    };
+
+    init();
+
+    return () => {
+      wsService.disconnect();
+    };
+  }, [isAuthenticated, login, logout]);
+
   // Handle online/offline events
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -49,13 +86,6 @@ export default function App() {
       window.removeEventListener('offline', handleOffline);
     };
   }, [isAuthenticated, setConnectionStatus]);
-
-  // Request notification permission
-  useEffect(() => {
-    if (isAuthenticated && 'Notification' in window && Notification.permission === 'default') {
-      // Will request when user enables notifications
-    }
-  }, [isAuthenticated]);
 
   if (!isAuthenticated) {
     return <AuthScreen />;
@@ -85,16 +115,16 @@ export default function App() {
             {useStore.getState().partner?.displayName?.[0]?.toUpperCase() || '?'}
           </div>
           <h3 className="font-semibold" style={{ color: 'var(--text-primary)' }}>
-            {useStore.getState().partner?.displayName || 'Партнёр'}
+            {useStore.getState().partner?.displayName || 'Partner'}
           </h3>
-          <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>Единственный чат</p>
+          <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>Your only chat</p>
         </div>
         <div className="p-3 border-t" style={{ borderColor: 'var(--border)' }}>
           <button
             className="w-full btn btn-secondary text-sm"
             onClick={() => useStore.getState().setActiveView('settings')}
           >
-            ⚙️ Настройки
+            ⚙️ Settings
           </button>
         </div>
       </aside>

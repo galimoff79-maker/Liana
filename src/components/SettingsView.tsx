@@ -41,8 +41,13 @@ export default function SettingsView() {
     }
   };
 
-  const handleLogout = () => {
-    if (confirm('Выйти из аккаунта?')) {
+  const handleLogout = async () => {
+    if (confirm('Logout?')) {
+      try {
+        await import('../services/api').then(({ api }) => api.logout());
+      } catch (e) {
+        // Ignore errors
+      }
       logout();
     }
   };

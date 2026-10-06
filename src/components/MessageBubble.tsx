@@ -1,9 +1,9 @@
 import { useState, useRef } from 'react';
-import { format, isToday, isYesterday, parseISO } from 'date-fns';
-import { ru } from 'date-fns/locale';
+import { format, parseISO } from 'date-fns';
 import { Check, CheckCheck, Reply, Pencil, Trash2, Copy, Pin } from 'lucide-react';
 import type { Message, User } from '../types';
 import { useStore } from '../stores';
+import { api } from '../services/api';
 
 const REACTIONS = ['❤️', '👍', '😂', '😮', '😢', '🔥', '🎉'];
 
@@ -22,13 +22,13 @@ export default function MessageBubble({ message, sender, isOwn, onReply, onEdit,
   const [showReactions, setShowReactions] = useState(false);
   const [menuPos, setMenuPos] = useState({ x: 0, y: 0 });
   const menuRef = useRef<HTMLDivElement>(null);
-  const { currentUser, addReaction, removeReaction, messages, setMediaViewer } = useStore();
+  const { currentUser, addReaction, removeReaction, messages, updateMessage } = useStore();
 
-  if (message.deleted && message.deletedForAll) {
+  if (message.deletedForAll) {
     return (
       <div className={`flex ${isOwn ? 'justify-end' : 'justify-start'} px-4 py-0.5`}>
         <div className="px-3 py-2 rounded-xl text-sm italic" style={{ color: 'var(--text-muted)', background: 'var(--bg-tertiary)' }}>
-          Сообщение удалено
+          Message deleted
         </div>
       </div>
     );
@@ -61,13 +61,12 @@ export default function MessageBubble({ message, sender, isOwn, onReply, onEdit,
     e.currentTarget.addEventListener('touchmove', clear, { once: true });
   };
 
-  const handleReaction = (emoji: string) => {
-    if (!currentUser) return;
-    const existing = message.reactions[emoji]?.includes(currentUser.id);
-    if (existing) {
-      removeReaction(message.id, emoji, currentUser.id);
-    } else {
-      addReaction(message.id, emoji, currentUser.id);
+  const handleReaction = async (emoji: string) => {
+    try {
+      const result = await api.toggleReaction(message.id, emoji);
+      updateMessage(message.id, { reactions: result.reactions });
+    } catch (error) {
+      console.error('Failed to toggle reaction:', error);
     }
     setShowReactions(false);
   };
@@ -80,7 +79,7 @@ export default function MessageBubble({ message, sender, isOwn, onReply, onEdit,
   const renderAttachments = () => {
     return message.attachments.map(att => {
       if (att.expired) {
-        return <div key={att.id} className="text-sm italic mt-1" style={{ color: 'var(--text-muted)' }}>Файл больше недоступен</div>;
+        return <div key={att.id} className="text-sm italic mt-1" style={{ color: 'var(--text-muted)' }}>File no longer available</div>;
       }
       if (att.type === 'image') {
         return (
@@ -105,14 +104,13 @@ export default function MessageBubble({ message, sender, isOwn, onReply, onEdit,
         );
       }
       return (
-        <div key={att.id} className="mt-1 flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer" style={{ background: 'rgba(255,255,255,0.1)' }}
-          onClick={() => window.open(att.url, '_blank')}>
+        <a key={att.id} href={att.url} download={att.name} className="mt-1 flex items-center gap-2 px-3 py-2 rounded-lg" style={{ background: 'rgba(255,255,255,0.1)' }}>
           <span className="text-lg">📄</span>
           <div className="flex-1 min-w-0">
             <p className="text-sm truncate">{att.name}</p>
             <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{(att.size / 1024 / 1024).toFixed(1)} MB</p>
           </div>
-        </div>
+        </a>
       );
     });
   };
@@ -135,7 +133,7 @@ export default function MessageBubble({ message, sender, isOwn, onReply, onEdit,
                 el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
               }}>
               <p className="font-medium text-xs" style={{ color: 'var(--accent)' }}>
-                {replyMsg.senderId === currentUser?.id ? 'Вы' : sender.displayName}
+                {replyMsg.senderId === currentUser?.id ? 'You' : sender.displayName}
               </p>
               <p className="truncate text-xs" style={{ color: 'var(--text-secondary)' }}>{replyMsg.text}</p>
             </div>
@@ -148,7 +146,7 @@ export default function MessageBubble({ message, sender, isOwn, onReply, onEdit,
           >
             {/* Text */}
             {message.text && (
-              <p className="text-[15px] leading-relaxed whitespace-pre-wrap break-words" style={isOwn ? { color: 'white' } : {}}>
+              <p className="msg-text text-[15px] leading-relaxed whitespace-pre-wrap break-words" style={isOwn ? { color: 'white' } : {}}>
                 {message.text}
               </p>
             )}
@@ -159,7 +157,7 @@ export default function MessageBubble({ message, sender, isOwn, onReply, onEdit,
             {/* Footer */}
             <div className={`flex items-center gap-1 mt-0.5 ${isOwn ? 'justify-end' : 'justify-start'}`}>
               {message.edited && (
-                <span className="text-[10px]" style={{ color: isOwn ? 'rgba(255,255,255,0.6)' : 'var(--text-muted)' }}>изменено</span>
+                <span className="text-[10px]" style={{ color: isOwn ? 'rgba(255,255,255,0.6)' : 'var(--text-muted)' }}>edited</span>
               )}
               <span className="text-[11px]" style={{ color: isOwn ? 'rgba(255,255,255,0.6)' : 'var(--text-muted)' }}>{time}</span>
               {isOwn && (
@@ -217,26 +215,26 @@ export default function MessageBubble({ message, sender, isOwn, onReply, onEdit,
         <div className="fixed inset-0 z-50" onClick={() => setShowMenu(false)}>
           <div ref={menuRef} className="context-menu" style={{ left: menuPos.x, top: menuPos.y }} onClick={e => e.stopPropagation()}>
             <div className="context-menu-item" onClick={() => { onReply(message); setShowMenu(false); }}>
-              <Reply size={16} /> Ответить
+              <Reply size={16} /> Reply
             </div>
             <div className="context-menu-item" onClick={handleCopy}>
-              <Copy size={16} /> Копировать
+              <Copy size={16} /> Copy
             </div>
             {isOwn && message.text && (
               <div className="context-menu-item" onClick={() => { onEdit(message); setShowMenu(false); }}>
-                <Pencil size={16} /> Редактировать
+                <Pencil size={16} /> Edit
               </div>
             )}
-            <div className="context-menu-item" onClick={() => { useStore.getState().updateMessage(message.id, { pinned: !message.pinned }); setShowMenu(false); }}>
-              <Pin size={16} /> {message.pinned ? 'Открепить' : 'Закрепить'}
+            <div className="context-menu-item" onClick={() => { updateMessage(message.id, { pinned: !message.pinned }); setShowMenu(false); }}>
+              <Pin size={16} /> {message.pinned ? 'Unpin' : 'Pin'}
             </div>
             {isOwn && (
               <>
                 <div className="context-menu-item danger" onClick={() => { onDelete(message, false); setShowMenu(false); }}>
-                  <Trash2 size={16} /> Удалить у себя
+                  <Trash2 size={16} /> Delete for me
                 </div>
                 <div className="context-menu-item danger" onClick={() => { onDelete(message, true); setShowMenu(false); }}>
-                  <Trash2 size={16} /> Удалить у всех
+                  <Trash2 size={16} /> Delete for all
                 </div>
               </>
             )}

@@ -6,42 +6,23 @@
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
 class ApiService {
-  private token: string | null = null;
-
-  setToken(token: string) {
-    this.token = token;
-    localStorage.setItem('pc_token', token);
-  }
-
-  getToken(): string | null {
-    if (!this.token) {
-      this.token = localStorage.getItem('pc_token');
-    }
-    return this.token;
-  }
-
-  clearToken() {
-    this.token = null;
-    localStorage.removeItem('pc_token');
-  }
-
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-    const token = this.getToken();
     const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
       ...(options.headers as Record<string, string> || {}),
     };
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
+    
+    // Only set Content-Type for JSON requests
+    if (!(options.body instanceof FormData)) {
+      headers['Content-Type'] = 'application/json';
     }
 
     const response = await fetch(`${API_BASE}${endpoint}`, {
       ...options,
       headers,
+      credentials: 'include', // Include cookies for auth
     });
 
     if (response.status === 401) {
-      this.clearToken();
       window.location.href = '/';
       throw new Error('Unauthorized');
     }
@@ -80,6 +61,10 @@ class ApiService {
     return this.request('/api/auth/logout', { method: 'POST' });
   }
 
+  async logoutAll() {
+    return this.request('/api/auth/logout-all', { method: 'POST' });
+  }
+
   async changePassword(oldPassword: string, newPassword: string) {
     return this.request('/api/auth/change-password', {
       method: 'POST',
@@ -106,11 +91,10 @@ class ApiService {
   async uploadAvatar(file: File) {
     const formData = new FormData();
     formData.append('file', file);
-    const token = this.getToken();
     const response = await fetch(`${API_BASE}/api/users/me/avatar`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
       body: formData,
+      credentials: 'include',
     });
     return response.json();
   }
@@ -123,7 +107,7 @@ class ApiService {
   }
 
   async sendMessage(text: string, replyTo?: string) {
-    return this.request('/api/messages', {
+    return this.request<{ id: string; timestamp: string }>('/api/messages', {
       method: 'POST',
       body: JSON.stringify({ text, reply_to: replyTo }),
     });
@@ -145,17 +129,19 @@ class ApiService {
   async toggleReaction(messageId: string, emoji: string) {
     const formData = new FormData();
     formData.append('emoji', emoji);
-    const token = this.getToken();
     const response = await fetch(`${API_BASE}/api/messages/${messageId}/reactions`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
       body: formData,
+      credentials: 'include',
     });
     return response.json();
   }
 
-  async markAsRead(messageId: string) {
-    return this.request(`/api/messages/${messageId}/read`, { method: 'POST' });
+  async markAsRead(messageIds: string[]) {
+    return this.request('/api/messages/read', {
+      method: 'POST',
+      body: JSON.stringify({ message_ids: messageIds }),
+    });
   }
 
   // Files
@@ -163,11 +149,10 @@ class ApiService {
     const formData = new FormData();
     formData.append('file', file);
     if (messageId) formData.append('message_id', messageId);
-    const token = this.getToken();
     const response = await fetch(`${API_BASE}/api/upload`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
       body: formData,
+      credentials: 'include',
     });
     return response.json();
   }
