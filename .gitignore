@@ -1,5 +1,42 @@
+# Dependencies
 node_modules/
-.next/
+backend/venv/
+
+# Build
 dist/
+
+# Environment
+.env
+.env.local
+.env.production
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+backend/test.db
+
+# Uploads
+uploads/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml
+
+# Backups
+backups/
+
+# SSL
+nginx/ssl/
+.next/
 build/
 *.log
