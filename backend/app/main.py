@@ -19,7 +19,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, event
+from collections import defaultdict
+import time
+from sqlalchemy import create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, event, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session, relationship
 from jose import jwt, JWTError
@@ -30,12 +32,18 @@ import aiofiles
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ============ Configuration ============
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://privatchat:privatchat@localhost:5432/privatchat")
-SECRET_KEY = os.getenv("SECRET_KEY")
-if not SECRET_KEY or len(SECRET_KEY) < 32:
-    raise ValueError("SECRET_KEY must be set and at least 32 characters long")
+# ============ Load .env FIRST ============
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+    logger.info("Loaded .env file")
+except ImportError:
+    logger.warning("python-dotenv not installed, using environment variables only")
 
+# ============ Configuration ============
+# SQLite by default for local development, PostgreSQL for production
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./liana.db")
+SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key-change-in-production-min-32-chars!!")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_DAYS = 30
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "./uploads"))
@@ -48,10 +56,22 @@ VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "")
 
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-# ============ Database ============
-engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_size=10)
+logger.info(f"Database: {DATABASE_URL.split('@')[-1] if '@' in DATABASE_URL else DATABASE_URL}")
+logger.info(f"Environment: {os.getenv('ENVIRONMENT', 'development')}")
+
+# SQLite needs different settings than PostgreSQL
+if DATABASE_URL.startswith("sqlite"):
+    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+else:
+    engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_size=10)
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
+
+# Create tables if using SQLite (for development)
+if DATABASE_URL.startswith("sqlite"):
+    Base.metadata.create_all(bind=engine)
+    logger.info("SQLite database initialized")
 
 # ============ Models ============
 class User(Base):
@@ -138,18 +158,36 @@ class PushSubscription(Base):
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer(auto_error=False)
 
+# Rate limiting for auth endpoints
+class RateLimiter:
+    def __init__(self, max_requests: int = 5, window_seconds: int = 60):
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+        self.requests = defaultdict(list)
+    
+    def is_allowed(self, key: str) -> bool:
+        now = time.time()
+        # Clean old requests
+        self.requests[key] = [t for t in self.requests[key] if now - t < self.window_seconds]
+        # Check limit
+        if len(self.requests[key]) >= self.max_requests:
+            return False
+        self.requests[key].append(now)
+        return True
+
+auth_limiter = RateLimiter(max_requests=5, window_seconds=60)
+
 def hash_password(password: str) -> str:
     return pwd_context.hash(password)
 
 def verify_password(password: str, hash: str) -> bool:
     return pwd_context.verify(password, hash)
 
-def create_access_token(user_id: str, session_id: str) -> str:
-    jti = str(uuid.uuid4())
+def create_access_token(user_id: str, jti: str) -> str:
+    """Create JWT token with provided JTI (must match session.jti)"""
     expire = datetime.utcnow() + timedelta(days=ACCESS_TOKEN_EXPIRE_DAYS)
     payload = {
         "sub": user_id,
-        "sid": session_id,
         "jti": jti,
         "exp": expire
     }
@@ -301,20 +339,51 @@ manager = ConnectionManager()
 # ============ FastAPI App ============
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
+    # Startup diagnostics
+    logger.info("=" * 50)
     logger.info("Starting ПриватЧат backend...")
+    logger.info("=" * 50)
+    logger.info(f"Database: {DATABASE_URL.split('@')[-1] if '@' in DATABASE_URL else DATABASE_URL}")
+    logger.info(f"Environment: {os.getenv('ENVIRONMENT', 'development')}")
+    logger.info(f"Frontend URL: {FRONTEND_URL}")
+    logger.info(f"Upload directory: {UPLOAD_DIR}")
+    logger.info(f"Max file size: {MAX_FILE_SIZE_MB}MB")
+    logger.info(f"File retention: {FILE_RETENTION_DAYS} days")
+    logger.info(f"Swagger docs: {'disabled' if is_production else 'enabled'}")
+    
+    # Check database connection
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        logger.info("Database connection: OK")
+    except Exception as e:
+        logger.error(f"Database connection FAILED: {e}")
+        logger.error("Please check your DATABASE_URL in .env file")
+    
+    logger.info("=" * 50)
+    
     asyncio.create_task(periodic_cleanup())
     yield
     # Shutdown
     logger.info("Shutting down ПриватЧат backend...")
 
-app = FastAPI(title="ПриватЧат API", version="2.0.0", lifespan=lifespan)
+# Disable Swagger in production
+is_production = os.getenv("ENVIRONMENT") == "production"
 
-# Minimal CORS - only for development
-if os.getenv("ENVIRONMENT") != "production":
+app = FastAPI(
+    title="ПриватЧат API",
+    version="2.0.0",
+    lifespan=lifespan,
+    docs_url=None if is_production else "/docs",
+    redoc_url=None if is_production else "/redoc",
+    openapi_url=None if is_production else "/openapi.json"
+)
+
+# CORS - only for development
+if not is_production:
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[FRONTEND_URL],
+        allow_origins=[FRONTEND_URL, "http://localhost:3000"],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -322,7 +391,12 @@ if os.getenv("ENVIRONMENT") != "production":
 
 # ============ Auth Routes ============
 @app.post("/api/auth/register")
-async def register(req: RegisterRequest, response: Response, db: Session = Depends(get_db)):
+async def register(req: RegisterRequest, request: Request, response: Response, db: Session = Depends(get_db)):
+    # Rate limiting
+    client_ip = request.client.host if request.client else "unknown"
+    if not auth_limiter.is_allowed(f"register:{client_ip}"):
+        raise HTTPException(status_code=429, detail="Too many registration attempts. Try again later.")
+    
     check_user_limit(db)
     
     if db.query(User).filter(User.username == req.username).first():
@@ -341,10 +415,10 @@ async def register(req: RegisterRequest, response: Response, db: Session = Depen
     db.add(user)
     db.flush()
     
-    # Create session
-    session = Session_(user_id=user.id, device_info="registration")
+    # Create session with JTI
+    jti = str(uuid.uuid4())
+    session = Session_(user_id=user.id, jti=jti, device_info="registration")
     db.add(session)
-    db.flush()
     
     # Create invite code
     invite_code = secrets.token_urlsafe(8).upper()[:8]
@@ -356,7 +430,7 @@ async def register(req: RegisterRequest, response: Response, db: Session = Depen
     db.add(invite)
     db.commit()
     
-    token = create_access_token(user.id, session.id)
+    token = create_access_token(user.id, jti)
     
     # Set HttpOnly cookie
     response.set_cookie(
@@ -400,16 +474,16 @@ async def register_with_invite(req: InviteRegisterRequest, response: Response, d
     db.add(user)
     db.flush()
     
-    # Create session
-    session = Session_(user_id=user.id, device_info="registration")
+    # Create session with JTI
+    jti = str(uuid.uuid4())
+    session = Session_(user_id=user.id, jti=jti, device_info="registration")
     db.add(session)
-    db.flush()
     
     invite.used = True
     invite.used_by = user.id
     db.commit()
     
-    token = create_access_token(user.id, session.id)
+    token = create_access_token(user.id, jti)
     
     response.set_cookie(
         key="access_token",
@@ -426,17 +500,23 @@ async def register_with_invite(req: InviteRegisterRequest, response: Response, d
     }
 
 @app.post("/api/auth/login")
-async def login(req: LoginRequest, response: Response, db: Session = Depends(get_db)):
+async def login(req: LoginRequest, request: Request, response: Response, db: Session = Depends(get_db)):
+    # Rate limiting
+    client_ip = request.client.host if request.client else "unknown"
+    if not auth_limiter.is_allowed(f"login:{client_ip}"):
+        raise HTTPException(status_code=429, detail="Too many login attempts. Try again later.")
+    
     user = db.query(User).filter(User.username == req.username).first()
     if not user or not verify_password(req.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     
-    # Create session
-    session = Session_(user_id=user.id, device_info="login")
+    # Create session with JTI
+    jti = str(uuid.uuid4())
+    session = Session_(user_id=user.id, jti=jti, device_info="login")
     db.add(session)
     db.commit()
     
-    token = create_access_token(user.id, session.id)
+    token = create_access_token(user.id, jti)
     
     response.set_cookie(
         key="access_token",
@@ -1093,8 +1173,8 @@ async def periodic_cleanup():
 @app.get("/api/health")
 async def health(db: Session = Depends(get_db)):
     try:
-        # Check database connection
-        db.execute("SELECT 1")
+        # Check database connection (SQLAlchemy 2.x requires text())
+        db.execute(text("SELECT 1"))
         return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
     except Exception as e:
         logger.error(f"Health check failed: {e}")

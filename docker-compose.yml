@@ -4,29 +4,30 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: privatchat
-      POSTGRES_USER: privatchat
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: liana
+      POSTGRES_USER: liana
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-liana_secret_password}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    # NOT exposed to host - internal network only
     networks:
-      - internal
+      - liana_network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U privatchat"]
+      test: ["CMD-SHELL", "pg_isready -U liana"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   backend:
-    build: ./backend
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
     environment:
-      DATABASE_URL: postgresql://privatchat:${DB_PASSWORD}@postgres:5432/privatchat
-      SECRET_KEY: ${SECRET_KEY}
+      DATABASE_URL: postgresql://liana:${DB_PASSWORD:-liana_secret_password}@postgres:5432/liana
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-production-min-32-chars!!}
       UPLOAD_DIR: /app/uploads
       FILE_RETENTION_DAYS: ${FILE_RETENTION_DAYS:-30}
       MAX_FILE_SIZE_MB: ${MAX_FILE_SIZE_MB:-500}
-      FRONTEND_URL: ${FRONTEND_URL}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
       ENVIRONMENT: production
@@ -36,7 +37,7 @@ services:
       postgres:
         condition: service_healthy
     networks:
-      - internal
+      - liana_network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
       interval: 30s
@@ -50,7 +51,7 @@ services:
     depends_on:
       - backend
     networks:
-      - internal
+      - liana_network
 
   nginx:
     image: nginx:alpine
@@ -65,7 +66,7 @@ services:
       - backend
       - frontend
     networks:
-      - internal
+      - liana_network
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:80/"]
       interval: 30s
@@ -73,7 +74,7 @@ services:
       retries: 3
 
 networks:
-  internal:
+  liana_network:
     driver: bridge
 
 volumes:

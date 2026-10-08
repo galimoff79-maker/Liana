@@ -11,5 +11,20 @@ export default defineConfig({
     hmr: {
       port: 3000,
     },
+    // Proxy API and WebSocket to backend
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+      '/ws': {
+        target: 'ws://localhost:8000',
+        ws: true,
+      },
+      '/files': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+    },
   },
 });
