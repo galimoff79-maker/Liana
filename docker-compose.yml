@@ -6,11 +6,12 @@ services:
     environment:
       POSTGRES_DB: privatchat
       POSTGRES_USER: privatchat
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-privatchat_secret}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+    # NOT exposed to host - internal network only
+    networks:
+      - internal
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U privatchat"]
       interval: 10s
@@ -20,19 +21,22 @@ services:
   backend:
     build: ./backend
     environment:
-      DATABASE_URL: postgresql://privatchat:${DB_PASSWORD:-privatchat_secret}@postgres:5432/privatchat
-      SECRET_KEY: ${SECRET_KEY:-change_me_in_production_use_random_string}
+      DATABASE_URL: postgresql://privatchat:${DB_PASSWORD}@postgres:5432/privatchat
+      SECRET_KEY: ${SECRET_KEY}
       UPLOAD_DIR: /app/uploads
       FILE_RETENTION_DAYS: ${FILE_RETENTION_DAYS:-30}
       MAX_FILE_SIZE_MB: ${MAX_FILE_SIZE_MB:-500}
-      FRONTEND_URL: ${FRONTEND_URL:-https://chat.example.com}
+      FRONTEND_URL: ${FRONTEND_URL}
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      ENVIRONMENT: production
     volumes:
       - uploads_data:/app/uploads
     depends_on:
       postgres:
         condition: service_healthy
+    networks:
+      - internal
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
       interval: 30s
@@ -45,6 +49,8 @@ services:
       dockerfile: frontend/Dockerfile
     depends_on:
       - backend
+    networks:
+      - internal
 
   nginx:
     image: nginx:alpine
@@ -58,11 +64,17 @@ services:
     depends_on:
       - backend
       - frontend
+    networks:
+      - internal
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:80/"]
       interval: 30s
       timeout: 10s
       retries: 3
+
+networks:
+  internal:
+    driver: bridge
 
 volumes:
   postgres_data:

@@ -37,18 +37,23 @@ class PushService {
 
     try {
       const vapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY || '';
-      const subscription = await this.registration!.pushManager.subscribe({
+      const options: PushSubscriptionOptionsInit = {
         userVisibleOnly: true,
-        applicationServerKey: vapidKey ? this.urlBase64ToUint8Array(vapidKey) as any : undefined,
-      });
+      };
+      
+      if (vapidKey) {
+        options.applicationServerKey = this.urlBase64ToUint8Array(vapidKey);
+      }
+      
+      const subscription = await this.registration!.pushManager.subscribe(options);
 
       const json = subscription.toJSON();
-      const p256dh = json.keys?.p256dh || '';
-      const auth = json.keys?.auth || '';
+      const keys = json.keys || {};
+      
       await api.subscribePush({
         endpoint: json.endpoint!,
-        p256dh: btoa(String.fromCharCode(...new Uint8Array(p256dh as any))),
-        auth: btoa(String.fromCharCode(...new Uint8Array(auth as any))),
+        p256dh: keys.p256dh || '',
+        auth: keys.auth || '',
       });
 
       return subscription;
@@ -83,12 +88,15 @@ class PushService {
     };
   }
 
-  private urlBase64ToUint8Array(base64String: string): Uint8Array {
-    if (!base64String) return new Uint8Array();
+  private urlBase64ToUint8Array(base64String: string): ArrayBuffer {
     const padding = '='.repeat((4 - base64String.length % 4) % 4);
     const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
     const rawData = window.atob(base64);
-    return new Uint8Array([...rawData].map(char => char.charCodeAt(0)));
+    const outputArray = new Uint8Array(rawData.length);
+    for (let i = 0; i < rawData.length; ++i) {
+      outputArray[i] = rawData.charCodeAt(i);
+    }
+    return outputArray.buffer;
   }
 }
 

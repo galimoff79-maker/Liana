@@ -1,6 +1,6 @@
 """
-ПриватЧат Backend - FastAPI Application
-Приватный мессенджер для двоих пользователей
+ПриватЧат Backend - Production Ready
+Real-time messenger for two users
 """
 import os
 import uuid
@@ -8,24 +8,34 @@ import hashlib
 import secrets
 import mimetypes
 import asyncio
+import logging
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
+from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, UploadFile, File, Form, BackgroundTasks, Request
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, UploadFile, File, Form, BackgroundTasks, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel, EmailStr
-from sqlalchemy import create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, LargeBinary
+from pydantic import BaseModel
+from sqlalchemy import create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, event
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session, relationship
 from jose import jwt, JWTError
 from passlib.context import CryptContext
+import aiofiles
+
+# ============ Logging ============
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # ============ Configuration ============
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://privatchat:privatchat@localhost:5432/privatchat")
-SECRET_KEY = os.getenv("SECRET_KEY", secrets.token_urlsafe(32))
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY or len(SECRET_KEY) < 32:
+    raise ValueError("SECRET_KEY must be set and at least 32 characters long")
+
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_DAYS = 30
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "./uploads"))
@@ -33,12 +43,13 @@ MAX_FILE_SIZE_MB = int(os.getenv("MAX_FILE_SIZE_MB", "500"))
 FILE_RETENTION_DAYS = int(os.getenv("FILE_RETENTION_DAYS", "30"))
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 MAX_USERS = 2
+VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY", "")
+VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "")
 
-# Ensure upload directory exists
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 # ============ Database ============
-engine = create_engine(DATABASE_URL)
+engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_size=10)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -51,41 +62,47 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
     avatar_path = Column(String(500), nullable=True)
     bio = Column(Text, nullable=True)
-    online = Column(Boolean, default=False)
-    last_seen = Column(DateTime, default=datetime.utcnow)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 class Session_(Base):
     __tablename__ = "sessions"
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id = Column(String, ForeignKey("users.id"), nullable=False)
-    token_hash = Column(String(255), nullable=False)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    jti = Column(String(255), unique=True, nullable=False, index=True)
     device_info = Column(String(500), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     last_active = Column(DateTime, default=datetime.utcnow)
+    revoked = Column(Boolean, default=False)
 
 class Message(Base):
     __tablename__ = "messages"
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    sender_id = Column(String, ForeignKey("users.id"), nullable=False)
+    sender_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     text = Column(Text, default="")
     timestamp = Column(DateTime, default=datetime.utcnow, index=True)
     edited = Column(Boolean, default=False)
     edited_at = Column(DateTime, nullable=True)
-    deleted = Column(Boolean, default=False)
-    deleted_for_all = Column(Boolean, default=False)
-    reply_to = Column(String, ForeignKey("messages.id"), nullable=True)
+    deleted_for_all = Column(Boolean, default=False, index=True)
+    reply_to = Column(String, ForeignKey("messages.id", ondelete="SET NULL"), nullable=True)
     reactions = Column(JSON, default=dict)
     pinned = Column(Boolean, default=False)
     voice_duration = Column(Integer, nullable=True)
     read_by = Column(JSON, default=list)
     delivered_to = Column(JSON, default=list)
 
+class MessageDeletion(Base):
+    """Track messages deleted for specific users"""
+    __tablename__ = "message_deletions"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    message_id = Column(String, ForeignKey("messages.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    deleted_at = Column(DateTime, default=datetime.utcnow)
+
 class Attachment(Base):
     __tablename__ = "attachments"
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    message_id = Column(String, ForeignKey("messages.id"), nullable=False)
-    type = Column(String(20), nullable=False)  # image, video, voice, file
+    message_id = Column(String, ForeignKey("messages.id", ondelete="CASCADE"), nullable=False, index=True)
+    type = Column(String(20), nullable=False)
     name = Column(String(500), nullable=False)
     file_path = Column(String(1000), nullable=False)
     thumbnail_path = Column(String(1000), nullable=True)
@@ -94,35 +111,32 @@ class Attachment(Base):
     duration = Column(Integer, nullable=True)
     width = Column(Integer, nullable=True)
     height = Column(Integer, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    expires_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    expires_at = Column(DateTime, nullable=True, index=True)
 
 class Invite(Base):
     __tablename__ = "invites"
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     code = Column(String(20), unique=True, nullable=False, index=True)
-    created_by = Column(String, ForeignKey("users.id"), nullable=False)
+    created_by = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     used = Column(Boolean, default=False)
-    used_by = Column(String, ForeignKey("users.id"), nullable=True)
+    used_by = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     expires_at = Column(DateTime, nullable=True)
 
 class PushSubscription(Base):
     __tablename__ = "push_subscriptions"
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id = Column(String, ForeignKey("users.id"), nullable=False)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     endpoint = Column(Text, nullable=False)
     p256dh = Column(String(500), nullable=False)
     auth = Column(String(500), nullable=False)
     device_info = Column(String(500), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-# Create tables
-Base.metadata.create_all(bind=engine)
-
 # ============ Security ============
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 def hash_password(password: str) -> str:
     return pwd_context.hash(password)
@@ -130,9 +144,15 @@ def hash_password(password: str) -> str:
 def verify_password(password: str, hash: str) -> bool:
     return pwd_context.verify(password, hash)
 
-def create_access_token(user_id: str) -> str:
+def create_access_token(user_id: str, session_id: str) -> str:
+    jti = str(uuid.uuid4())
     expire = datetime.utcnow() + timedelta(days=ACCESS_TOKEN_EXPIRE_DAYS)
-    payload = {"sub": user_id, "exp": expire, "jti": str(uuid.uuid4())}
+    payload = {
+        "sub": user_id,
+        "sid": session_id,
+        "jti": jti,
+        "exp": expire
+    }
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 def decode_token(token: str) -> dict:
@@ -146,23 +166,53 @@ def get_db():
     finally:
         db.close()
 
-def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)):
+def get_current_user(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db)
+):
+    token = None
+    
+    # Try cookie first
+    token = request.cookies.get("access_token")
+    
+    # Fallback to Authorization header
+    if not token and credentials:
+        token = credentials.credentials
+    
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
     try:
-        payload = decode_token(credentials.credentials)
+        payload = decode_token(token)
         user_id = payload.get("sub")
-        if not user_id:
+        jti = payload.get("jti")
+        
+        if not user_id or not jti:
             raise HTTPException(status_code=401, detail="Invalid token")
+        
+        # Check if session is revoked
+        session = db.query(Session_).filter(Session_.jti == jti, Session_.revoked == False).first()
+        if not session:
+            raise HTTPException(status_code=401, detail="Session revoked")
+        
+        # Update last active
+        session.last_active = datetime.utcnow()
+        db.commit()
+        
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
+        
         return user
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
 def check_user_limit(db: Session):
+    """Check if we can register another user (max 2)"""
     count = db.query(User).count()
     if count >= MAX_USERS:
-        raise HTTPException(status_code=403, detail="Регистрация закрыта. Максимум 2 пользователя.")
+        raise HTTPException(status_code=403, detail="Registration closed. Maximum 2 users.")
 
 # ============ Pydantic Schemas ============
 class RegisterRequest(BaseModel):
@@ -202,16 +252,8 @@ class PushSubscriptionRequest(BaseModel):
     auth: str
     device_info: Optional[str] = None
 
-# ============ FastAPI App ============
-app = FastAPI(title="ПриватЧат API", version="1.0.0")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[FRONTEND_URL],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+class ReadMessagesRequest(BaseModel):
+    message_ids: List[str]
 
 # ============ WebSocket Manager ============
 class ConnectionManager:
@@ -223,6 +265,7 @@ class ConnectionManager:
         if user_id not in self.active_connections:
             self.active_connections[user_id] = []
         self.active_connections[user_id].append(websocket)
+        logger.info(f"User {user_id} connected. Total connections: {len(self.active_connections[user_id])}")
 
     def disconnect(self, user_id: str, websocket: WebSocket):
         if user_id in self.active_connections:
@@ -231,38 +274,64 @@ class ConnectionManager:
             ]
             if not self.active_connections[user_id]:
                 del self.active_connections[user_id]
+            logger.info(f"User {user_id} disconnected")
+
+    def is_user_online(self, user_id: str) -> bool:
+        return user_id in self.active_connections and len(self.active_connections[user_id]) > 0
 
     async def send_to_user(self, user_id: str, message: dict):
         if user_id in self.active_connections:
             for ws in self.active_connections[user_id]:
                 try:
                     await ws.send_json(message)
-                except:
-                    pass
+                except Exception as e:
+                    logger.error(f"Error sending to user {user_id}: {e}")
 
-    async def broadcast(self, message: dict, exclude_user: str = None):
+    async def broadcast_except(self, message: dict, exclude_user: str = None):
         for user_id, connections in self.active_connections.items():
             if user_id != exclude_user:
                 for ws in connections:
                     try:
                         await ws.send_json(message)
-                    except:
-                        pass
+                    except Exception as e:
+                        logger.error(f"Error broadcasting to user {user_id}: {e}")
 
 manager = ConnectionManager()
 
+# ============ FastAPI App ============
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    logger.info("Starting ПриватЧат backend...")
+    asyncio.create_task(periodic_cleanup())
+    yield
+    # Shutdown
+    logger.info("Shutting down ПриватЧат backend...")
+
+app = FastAPI(title="ПриватЧат API", version="2.0.0", lifespan=lifespan)
+
+# Minimal CORS - only for development
+if os.getenv("ENVIRONMENT") != "production":
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[FRONTEND_URL],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
 # ============ Auth Routes ============
 @app.post("/api/auth/register")
-async def register(req: RegisterRequest, db: Session = Depends(get_db)):
+async def register(req: RegisterRequest, response: Response, db: Session = Depends(get_db)):
     check_user_limit(db)
     
     if db.query(User).filter(User.username == req.username).first():
-        raise HTTPException(status_code=400, detail="Пользователь уже существует")
+        raise HTTPException(status_code=400, detail="Username already exists")
     
     if len(req.username) < 3:
-        raise HTTPException(status_code=400, detail="Имя пользователя минимум 3 символа")
+        raise HTTPException(status_code=400, detail="Username must be at least 3 characters")
     if len(req.password) < 6:
-        raise HTTPException(status_code=400, detail="Пароль минимум 6 символов")
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
     
     user = User(
         username=req.username,
@@ -270,10 +339,14 @@ async def register(req: RegisterRequest, db: Session = Depends(get_db)):
         password_hash=hash_password(req.password),
     )
     db.add(user)
-    db.commit()
-    db.refresh(user)
+    db.flush()
     
-    # Create invite code for second user
+    # Create session
+    session = Session_(user_id=user.id, device_info="registration")
+    db.add(session)
+    db.flush()
+    
+    # Create invite code
     invite_code = secrets.token_urlsafe(8).upper()[:8]
     invite = Invite(
         code=invite_code,
@@ -283,7 +356,18 @@ async def register(req: RegisterRequest, db: Session = Depends(get_db)):
     db.add(invite)
     db.commit()
     
-    token = create_access_token(user.id)
+    token = create_access_token(user.id, session.id)
+    
+    # Set HttpOnly cookie
+    response.set_cookie(
+        key="access_token",
+        value=token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=ACCESS_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
+    )
+    
     return {
         "token": token,
         "user": {"id": user.id, "username": user.username, "displayName": user.display_name},
@@ -291,7 +375,7 @@ async def register(req: RegisterRequest, db: Session = Depends(get_db)):
     }
 
 @app.post("/api/auth/register-with-invite")
-async def register_with_invite(req: InviteRegisterRequest, db: Session = Depends(get_db)):
+async def register_with_invite(req: InviteRegisterRequest, response: Response, db: Session = Depends(get_db)):
     check_user_limit(db)
     
     invite = db.query(Invite).filter(
@@ -300,13 +384,13 @@ async def register_with_invite(req: InviteRegisterRequest, db: Session = Depends
     ).first()
     
     if not invite:
-        raise HTTPException(status_code=400, detail="Неверный или использованный код-приглашение")
+        raise HTTPException(status_code=400, detail="Invalid or used invite code")
     
     if invite.expires_at and invite.expires_at < datetime.utcnow():
-        raise HTTPException(status_code=400, detail="Код-приглашение истёк")
+        raise HTTPException(status_code=400, detail="Invite code expired")
     
     if db.query(User).filter(User.username == req.username).first():
-        raise HTTPException(status_code=400, detail="Пользователь уже существует")
+        raise HTTPException(status_code=400, detail="Username already exists")
     
     user = User(
         username=req.username,
@@ -314,41 +398,103 @@ async def register_with_invite(req: InviteRegisterRequest, db: Session = Depends
         password_hash=hash_password(req.password),
     )
     db.add(user)
-    db.commit()
-    db.refresh(user)
+    db.flush()
+    
+    # Create session
+    session = Session_(user_id=user.id, device_info="registration")
+    db.add(session)
+    db.flush()
     
     invite.used = True
     invite.used_by = user.id
     db.commit()
     
-    token = create_access_token(user.id)
+    token = create_access_token(user.id, session.id)
+    
+    response.set_cookie(
+        key="access_token",
+        value=token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=ACCESS_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
+    )
+    
     return {
         "token": token,
         "user": {"id": user.id, "username": user.username, "displayName": user.display_name},
     }
 
 @app.post("/api/auth/login")
-async def login(req: LoginRequest, db: Session = Depends(get_db)):
+async def login(req: LoginRequest, response: Response, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.username == req.username).first()
     if not user or not verify_password(req.password, user.password_hash):
-        raise HTTPException(status_code=401, detail="Неверные учётные данные")
+        raise HTTPException(status_code=401, detail="Invalid credentials")
     
-    token = create_access_token(user.id)
+    # Create session
+    session = Session_(user_id=user.id, device_info="login")
+    db.add(session)
+    db.commit()
+    
+    token = create_access_token(user.id, session.id)
+    
+    response.set_cookie(
+        key="access_token",
+        value=token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=ACCESS_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
+    )
+    
     return {
         "token": token,
         "user": {"id": user.id, "username": user.username, "displayName": user.display_name},
     }
 
 @app.post("/api/auth/logout")
-async def logout(user: User = Depends(get_current_user)):
+async def logout(request: Request, response: Response, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    # Revoke current session
+    token = request.cookies.get("access_token")
+    if token:
+        try:
+            payload = decode_token(token)
+            jti = payload.get("jti")
+            if jti:
+                session = db.query(Session_).filter(Session_.jti == jti).first()
+                if session:
+                    session.revoked = True
+                    db.commit()
+        except:
+            pass
+    
+    response.delete_cookie("access_token")
+    return {"status": "ok"}
+
+@app.post("/api/auth/logout-all")
+async def logout_all(response: Response, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    # Revoke all sessions for this user
+    sessions = db.query(Session_).filter(Session_.user_id == user.id).all()
+    for session in sessions:
+        session.revoked = True
+    db.commit()
+    
+    response.delete_cookie("access_token")
     return {"status": "ok"}
 
 @app.post("/api/auth/change-password")
 async def change_password(req: PasswordChangeRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if not verify_password(req.old_password, user.password_hash):
-        raise HTTPException(status_code=400, detail="Неверный текущий пароль")
+        raise HTTPException(status_code=400, detail="Invalid current password")
+    
     user.password_hash = hash_password(req.new_password)
+    
+    # Revoke all other sessions
+    sessions = db.query(Session_).filter(Session_.user_id == user.id).all()
+    for session in sessions:
+        session.revoked = True
     db.commit()
+    
     return {"status": "ok"}
 
 # ============ User Routes ============
@@ -360,8 +506,7 @@ async def get_me(user: User = Depends(get_current_user)):
         "displayName": user.display_name,
         "bio": user.bio,
         "avatar": user.avatar_path,
-        "online": user.online,
-        "lastSeen": user.last_seen.isoformat() if user.last_seen else None,
+        "online": manager.is_user_online(user.id),
     }
 
 @app.get("/api/users/partner")
@@ -375,8 +520,7 @@ async def get_partner(user: User = Depends(get_current_user), db: Session = Depe
         "displayName": partner.display_name,
         "bio": partner.bio,
         "avatar": partner.avatar_path,
-        "online": partner.online,
-        "lastSeen": partner.last_seen.isoformat() if partner.last_seen else None,
+        "online": manager.is_user_online(partner.id),
     }
 
 @app.put("/api/users/me")
@@ -387,24 +531,34 @@ async def update_profile(req: ProfileUpdateRequest, user: User = Depends(get_cur
         user.bio = req.bio
     if req.username is not None and req.username != user.username:
         if db.query(User).filter(User.username == req.username).first():
-            raise HTTPException(status_code=400, detail="Username занят")
+            raise HTTPException(status_code=400, detail="Username taken")
         user.username = req.username
     db.commit()
     return {"status": "ok"}
 
 @app.post("/api/users/me/avatar")
 async def upload_avatar(file: UploadFile = File(...), user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    # Validate MIME
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Invalid file type")
+    
     ext = Path(file.filename).suffix.lower()
+    if ext not in ['.jpg', '.jpeg', '.png', '.gif', '.webp']:
+        raise HTTPException(status_code=400, detail="Invalid file extension")
+    
     filename = f"{uuid.uuid4()}{ext}"
     filepath = UPLOAD_DIR / "avatars" / filename
     filepath.parent.mkdir(parents=True, exist_ok=True)
     
-    content = await file.read()
-    if len(content) > 5 * 1024 * 1024:  # 5MB limit for avatars
-        raise HTTPException(status_code=400, detail="Файл слишком большой (макс. 5MB)")
-    
-    with open(filepath, "wb") as f:
-        f.write(content)
+    # Stream file to disk
+    size = 0
+    async with aiofiles.open(filepath, 'wb') as f:
+        while chunk := await file.read(1024 * 1024):  # 1MB chunks
+            size += len(chunk)
+            if size > 5 * 1024 * 1024:  # 5MB limit
+                filepath.unlink()
+                raise HTTPException(status_code=400, detail="File too large (max 5MB)")
+            await f.write(chunk)
     
     user.avatar_path = f"/api/files/avatars/{filename}"
     db.commit()
@@ -418,11 +572,19 @@ async def get_messages(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    query = db.query(Message).filter(Message.deleted_for_all == False).order_by(Message.timestamp.desc())
+    # Get messages not deleted for this user
+    query = db.query(Message).filter(
+        Message.deleted_for_all == False,
+        ~Message.id.in_(
+            db.query(MessageDeletion.message_id).filter(MessageDeletion.user_id == user.id)
+        )
+    ).order_by(Message.timestamp.desc())
+    
     if before:
         msg = db.query(Message).filter(Message.id == before).first()
         if msg:
             query = query.filter(Message.timestamp < msg.timestamp)
+    
     messages = query.limit(limit).all()
     messages.reverse()
     
@@ -432,11 +594,10 @@ async def get_messages(
         result.append({
             "id": msg.id,
             "senderId": msg.sender_id,
-            "text": msg.text if not msg.deleted else "",
+            "text": msg.text if not msg.deleted_for_all else "",
             "timestamp": msg.timestamp.isoformat(),
             "edited": msg.edited,
             "editedAt": msg.edited_at.isoformat() if msg.edited_at else None,
-            "deleted": msg.deleted,
             "deletedForAll": msg.deleted_for_all,
             "replyTo": msg.reply_to,
             "reactions": msg.reactions or {},
@@ -462,6 +623,12 @@ async def send_message(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    # Validate reply_to if provided
+    if req.reply_to:
+        reply_msg = db.query(Message).filter(Message.id == req.reply_to).first()
+        if not reply_msg:
+            raise HTTPException(status_code=400, detail="Reply message not found")
+    
     msg = Message(
         sender_id=user.id,
         text=req.text,
@@ -486,6 +653,10 @@ async def send_message(
                 "replyTo": msg.reply_to,
             }
         })
+        
+        # Send push notification if partner is offline
+        if not manager.is_user_online(partner.id):
+            await send_push_notification(partner.id, "Новое сообщение", req.text[:100], db)
     
     return {"id": msg.id, "timestamp": msg.timestamp.isoformat()}
 
@@ -498,9 +669,9 @@ async def edit_message(
 ):
     msg = db.query(Message).filter(Message.id == message_id).first()
     if not msg:
-        raise HTTPException(status_code=404, detail="Сообщение не найдено")
+        raise HTTPException(status_code=404, detail="Message not found")
     if msg.sender_id != user.id:
-        raise HTTPException(status_code=403, detail="Нет прав")
+        raise HTTPException(status_code=403, detail="Permission denied")
     
     msg.text = req.text
     msg.edited = True
@@ -527,17 +698,17 @@ async def delete_message(
 ):
     msg = db.query(Message).filter(Message.id == message_id).first()
     if not msg:
-        raise HTTPException(status_code=404, detail="Сообщение не найдено")
+        raise HTTPException(status_code=404, detail="Message not found")
     if msg.sender_id != user.id:
-        raise HTTPException(status_code=403, detail="Нет прав")
+        raise HTTPException(status_code=403, detail="Permission denied")
     
     if for_all:
-        msg.deleted = True
         msg.deleted_for_all = True
         msg.text = ""
     else:
-        # Delete only for current user (soft delete - mark in read_by)
-        pass
+        # Delete only for current user
+        deletion = MessageDeletion(message_id=msg.id, user_id=user.id)
+        db.add(deletion)
     
     db.commit()
     
@@ -559,7 +730,7 @@ async def toggle_reaction(
 ):
     msg = db.query(Message).filter(Message.id == message_id).first()
     if not msg:
-        raise HTTPException(status_code=404, detail="Сообщение не найдено")
+        raise HTTPException(status_code=404, detail="Message not found")
     
     reactions = msg.reactions or {}
     if emoji not in reactions:
@@ -585,30 +756,30 @@ async def toggle_reaction(
     
     return {"reactions": reactions}
 
-@app.post("/api/messages/{message_id}/read")
-async def mark_read(
-    message_id: str,
+@app.post("/api/messages/read")
+async def mark_messages_read(
+    req: ReadMessagesRequest,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    msg = db.query(Message).filter(Message.id == message_id).first()
-    if not msg:
-        raise HTTPException(status_code=404)
+    for msg_id in req.message_ids:
+        msg = db.query(Message).filter(Message.id == msg_id).first()
+        if msg and msg.sender_id != user.id:
+            read_by = msg.read_by or []
+            if user.id not in read_by:
+                read_by.append(user.id)
+                msg.read_by = read_by
+                
+                # Notify sender
+                sender = db.query(User).filter(User.id == msg.sender_id).first()
+                if sender:
+                    await manager.send_to_user(sender.id, {
+                        "type": "message_read",
+                        "messageId": msg.id,
+                        "userId": user.id,
+                    })
     
-    read_by = msg.read_by or []
-    if user.id not in read_by:
-        read_by.append(user.id)
-        msg.read_by = read_by
-        db.commit()
-    
-    partner = db.query(User).filter(User.id != user.id).first()
-    if partner:
-        await manager.send_to_user(partner.id, {
-            "type": "message_read",
-            "messageId": msg.id,
-            "userId": user.id,
-        })
-    
+    db.commit()
     return {"status": "ok"}
 
 # ============ File Upload ============
@@ -619,13 +790,14 @@ async def upload_file(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    content = await file.read()
-    max_size = MAX_FILE_SIZE_MB * 1024 * 1024
-    if len(content) > max_size:
-        raise HTTPException(status_code=400, detail=f"Файл слишком большой (макс. {MAX_FILE_SIZE_MB}MB)")
-    
-    # Determine type
+    # Determine type from MIME
     mime = file.content_type or mimetypes.guess_type(file.filename)[0] or "application/octet-stream"
+    
+    # Security: block executable files
+    blocked_mimes = ['application/x-executable', 'application/x-msdownload', 'application/x-msi']
+    if mime in blocked_mimes:
+        raise HTTPException(status_code=400, detail="File type not allowed")
+    
     if mime.startswith("image/"):
         file_type = "image"
     elif mime.startswith("video/"):
@@ -642,14 +814,25 @@ async def upload_file(
     filepath = UPLOAD_DIR / subdir / filename
     filepath.parent.mkdir(parents=True, exist_ok=True)
     
-    with open(filepath, "wb") as f:
-        f.write(content)
+    # Stream file to disk
+    size = 0
+    max_size = MAX_FILE_SIZE_MB * 1024 * 1024
+    async with aiofiles.open(filepath, 'wb') as f:
+        while chunk := await file.read(1024 * 1024):  # 1MB chunks
+            size += len(chunk)
+            if size > max_size:
+                filepath.unlink()
+                raise HTTPException(status_code=400, detail=f"File too large (max {MAX_FILE_SIZE_MB}MB)")
+            await f.write(chunk)
     
     expires_at = datetime.utcnow() + timedelta(days=FILE_RETENTION_DAYS)
     
-    # Create or update message
+    # Create or use existing message
     if message_id:
         msg = db.query(Message).filter(Message.id == message_id).first()
+        if not msg:
+            filepath.unlink()
+            raise HTTPException(status_code=404, detail="Message not found")
     else:
         msg = Message(sender_id=user.id, text="", delivered_to=[user.id], read_by=[])
         db.add(msg)
@@ -660,12 +843,25 @@ async def upload_file(
         type=file_type,
         name=file.filename,
         file_path=f"{subdir}/{filename}",
-        size=len(content),
+        size=size,
         mime_type=mime,
         expires_at=expires_at,
     )
     db.add(attachment)
     db.commit()
+    
+    # Notify partner
+    partner = db.query(User).filter(User.id != user.id).first()
+    if partner:
+        await manager.send_to_user(partner.id, {
+            "type": "new_message",
+            "message": {
+                "id": msg.id,
+                "senderId": msg.sender_id,
+                "text": msg.text,
+                "timestamp": msg.timestamp.isoformat(),
+            }
+        })
     
     return {
         "messageId": msg.id,
@@ -674,28 +870,39 @@ async def upload_file(
             "type": file_type,
             "name": file.filename,
             "url": f"/api/files/{subdir}/{filename}",
-            "size": len(content),
+            "size": size,
             "mimeType": mime,
         }
     }
 
 @app.get("/api/files/{path:path}")
-async def get_file(path: str, user: User = Depends(get_current_user)):
+async def get_file(path: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     # Security: prevent path traversal
-    safe_path = Path(path).name
-    subdir = Path(path).parent.name
+    if '..' in path or path.startswith('/'):
+        raise HTTPException(status_code=400, detail="Invalid path")
     
-    # Check if avatars are public
-    if subdir == "avatars":
-        filepath = UPLOAD_DIR / "avatars" / safe_path
+    # Check if avatar (public for authenticated users)
+    if path.startswith("avatars/"):
+        filepath = UPLOAD_DIR / path
     else:
-        filepath = UPLOAD_DIR / subdir / safe_path
+        # Check attachment exists and user has access
+        attachment = db.query(Attachment).filter(Attachment.file_path == path).first()
+        if not attachment:
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        # Check expiration
+        if attachment.expires_at and attachment.expires_at < datetime.utcnow():
+            raise HTTPException(status_code=410, detail="File expired")
+        
+        # Check message exists
+        message = db.query(Message).filter(Message.id == attachment.message_id).first()
+        if not message:
+            raise HTTPException(status_code=404, detail="Message not found")
+        
+        filepath = UPLOAD_DIR / path
     
     if not filepath.exists():
-        raise HTTPException(status_code=404, detail="Файл не найден")
-    
-    # Verify user has access (check message ownership)
-    # For simplicity, both users can access all files in their chat
+        raise HTTPException(status_code=404, detail="File not found")
     
     return FileResponse(filepath)
 
@@ -703,7 +910,7 @@ async def get_file(path: str, user: User = Depends(get_current_user)):
 @app.get("/api/search")
 async def search_messages(
     q: str,
-    type: Optional[str] = None,  # all, images, videos, files, voice
+    type: Optional[str] = None,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -722,34 +929,41 @@ async def search_messages(
 
 # ============ WebSocket ============
 @app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket, token: str):
+async def websocket_endpoint(websocket: WebSocket, db: Session = Depends(get_db)):
+    # Authenticate via cookie
+    token = websocket.cookies.get("access_token")
+    if not token:
+        await websocket.close(code=4001)
+        return
+    
     try:
         payload = decode_token(token)
         user_id = payload.get("sub")
-        if not user_id:
+        jti = payload.get("jti")
+        
+        if not user_id or not jti:
             await websocket.close(code=4001)
             return
+        
+        # Check session
+        session = db.query(Session_).filter(Session_.jti == jti, Session_.revoked == False).first()
+        if not session:
+            await websocket.close(code=4001)
+            return
+        
     except JWTError:
         await websocket.close(code=4001)
         return
     
     await manager.connect(user_id, websocket)
     
-    # Update online status
-    db = SessionLocal()
-    user = db.query(User).filter(User.id == user_id).first()
-    if user:
-        user.online = True
-        user.last_seen = datetime.utcnow()
-        db.commit()
-        
-        # Notify partner
-        partner = db.query(User).filter(User.id != user_id).first()
-        if partner:
-            await manager.send_to_user(partner.id, {
-                "type": "user_online",
-                "userId": user_id,
-            })
+    # Notify partner
+    partner = db.query(User).filter(User.id != user_id).first()
+    if partner and manager.is_user_online(partner.id):
+        await manager.send_to_user(partner.id, {
+            "type": "user_online",
+            "userId": user_id,
+        })
     
     try:
         while True:
@@ -757,7 +971,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
             msg_type = data.get("type")
             
             if msg_type == "typing":
-                partner = db.query(User).filter(User.id != user_id).first()
                 if partner:
                     await manager.send_to_user(partner.id, {
                         "type": "typing",
@@ -772,27 +985,65 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
         pass
     finally:
         manager.disconnect(user_id, websocket)
-        user = db.query(User).filter(User.id == user_id).first()
-        if user:
-            user.online = False
-            user.last_seen = datetime.utcnow()
-            db.commit()
-            partner = db.query(User).filter(User.id != user_id).first()
-            if partner:
-                await manager.send_to_user(partner.id, {
-                    "type": "user_offline",
-                    "userId": user_id,
-                    "lastSeen": datetime.utcnow().isoformat(),
-                })
-        db.close()
+        
+        # Notify partner if user is fully offline
+        if not manager.is_user_online(user_id) and partner:
+            await manager.send_to_user(partner.id, {
+                "type": "user_offline",
+                "userId": user_id,
+            })
 
 # ============ Push Notifications ============
+async def send_push_notification(user_id: str, title: str, body: str, db: Session):
+    """Send push notification to user's devices"""
+    if not VAPID_PRIVATE_KEY or not VAPID_PUBLIC_KEY:
+        return
+    
+    try:
+        from pywebpush import webpush, WebPushException
+        
+        subscriptions = db.query(PushSubscription).filter(PushSubscription.user_id == user_id).all()
+        
+        for sub in subscriptions:
+            try:
+                webpush(
+                    subscription_info={
+                        "endpoint": sub.endpoint,
+                        "keys": {
+                            "p256dh": sub.p256dh,
+                            "auth": sub.auth
+                        }
+                    },
+                    data=f'{{"title":"{title}","body":"{body}"}}',
+                    vapid_private_key=VAPID_PRIVATE_KEY,
+                    vapid_claims={"sub": f"mailto:admin@{FRONTEND_URL}"}
+                )
+            except WebPushException as e:
+                logger.error(f"Push failed for subscription {sub.id}: {e}")
+                # Remove invalid subscription
+                if e.response and e.response.status_code in [404, 410]:
+                    db.delete(sub)
+                    db.commit()
+    except ImportError:
+        logger.warning("pywebpush not installed, push notifications disabled")
+    except Exception as e:
+        logger.error(f"Push notification error: {e}")
+
 @app.post("/api/push/subscribe")
 async def subscribe_push(
     req: PushSubscriptionRequest,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    # Check if subscription already exists
+    existing = db.query(PushSubscription).filter(
+        PushSubscription.user_id == user.id,
+        PushSubscription.endpoint == req.endpoint
+    ).first()
+    
+    if existing:
+        return {"status": "ok"}
+    
     sub = PushSubscription(
         user_id=user.id,
         endpoint=req.endpoint,
@@ -812,6 +1063,7 @@ async def cleanup_expired_files():
         expired = db.query(Attachment).filter(
             Attachment.expires_at < datetime.utcnow()
         ).all()
+        
         for att in expired:
             filepath = UPLOAD_DIR / att.file_path
             if filepath.exists():
@@ -821,14 +1073,13 @@ async def cleanup_expired_files():
                 if thumb.exists():
                     thumb.unlink()
             db.delete(att)
+        
         db.commit()
+        logger.info(f"Cleaned up {len(expired)} expired files")
+    except Exception as e:
+        logger.error(f"Cleanup error: {e}")
     finally:
         db.close()
-
-@app.on_event("startup")
-async def startup():
-    # Start cleanup task
-    asyncio.create_task(periodic_cleanup())
 
 async def periodic_cleanup():
     while True:
@@ -836,12 +1087,18 @@ async def periodic_cleanup():
         try:
             await cleanup_expired_files()
         except Exception as e:
-            print(f"Cleanup error: {e}")
+            logger.error(f"Periodic cleanup error: {e}")
 
 # ============ Health Check ============
 @app.get("/api/health")
-async def health():
-    return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
+async def health(db: Session = Depends(get_db)):
+    try:
+        # Check database connection
+        db.execute("SELECT 1")
+        return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        raise HTTPException(status_code=503, detail="Database connection failed")
 
 if __name__ == "__main__":
     import uvicorn

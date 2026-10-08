@@ -16,8 +16,8 @@ class WebSocketService {
   private handlers: Map<string, MessageHandler[]> = new Map();
   private messageQueue: any[] = [];
 
-  connect(token: string) {
-    const wsUrl = (import.meta.env.VITE_WS_URL || `ws${location.protocol === 'https:' ? 's' : ''}://${location.host}`) + `/ws?token=${token}`;
+  connect() {
+    const wsUrl = (import.meta.env.VITE_WS_URL || `ws${location.protocol === 'https:' ? 's' : ''}://${location.host}`) + '/ws';
     
     try {
       this.ws = new WebSocket(wsUrl);
@@ -57,43 +57,74 @@ class WebSocketService {
 
   private handleMessage(data: any) {
     const { type } = data;
-    
-    // Update store based on message type
     const store = useStore.getState();
     
     switch (type) {
       case 'pong':
         break;
+      
       case 'new_message':
-        store.addMessage(data.message);
+        // Add message to store
+        const newMsg = {
+          ...data.message,
+          chatId: 'main',
+          edited: false,
+          deleted: false,
+          deletedForAll: false,
+          reactions: {},
+          attachments: [],
+          readBy: [],
+          deliveredTo: [],
+          pinned: false,
+        };
+        store.addMessage(newMsg);
         break;
+      
       case 'message_edited':
-        store.updateMessage(data.messageId, { text: data.text, edited: true, editedAt: data.editedAt });
+        store.updateMessage(data.messageId, { 
+          text: data.text, 
+          edited: true, 
+          editedAt: data.editedAt 
+        });
         break;
+      
       case 'message_deleted':
-        store.deleteMessage(data.messageId, true);
+        store.updateMessage(data.messageId, { 
+          deleted: true, 
+          deletedForAll: true, 
+          text: '', 
+          attachments: [] 
+        });
         break;
+      
       case 'reaction_updated':
         store.updateMessage(data.messageId, { reactions: data.reactions });
         break;
+      
       case 'typing':
         store.setTypingPartner(data.isTyping);
         break;
+      
       case 'user_online':
         if (store.partner) {
-          store.partner.online = true;
+          store.partner = { ...store.partner, online: true };
         }
         break;
+      
       case 'user_offline':
         if (store.partner) {
-          store.partner.online = false;
-          store.partner.lastSeen = data.lastSeen;
+          store.partner = { ...store.partner, online: false };
         }
         break;
+      
       case 'message_read':
-        store.updateMessage(data.messageId, { 
-          readBy: [...new Set([...(store.messages.find(m => m.id === data.messageId)?.readBy || []), data.userId])] 
-        });
+        const msg = store.messages.find(m => m.id === data.messageId);
+        if (msg) {
+          const readBy = msg.readBy.includes(data.userId) 
+            ? msg.readBy 
+            : [...msg.readBy, data.userId];
+          store.updateMessage(data.messageId, { readBy });
+        }
         break;
     }
 
@@ -143,8 +174,7 @@ class WebSocketService {
     this.reconnectAttempts++;
     
     this.reconnectTimer = window.setTimeout(() => {
-      const token = localStorage.getItem('pc_token');
-      if (token) this.connect(token);
+      this.connect();
     }, delay);
   }
 

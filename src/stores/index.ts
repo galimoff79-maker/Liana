@@ -51,6 +51,7 @@ interface AppState {
   updateSettings: (settings: Partial<UserSettings>) => void;
   updateProfile: (updates: Partial<User>) => void;
   setSessions: (sessions: Session[]) => void;
+  setMessages: (messages: Message[]) => void;
 }
 
 const loadFromStorage = <T>(key: string, fallback: T): T => {
@@ -68,7 +69,7 @@ export const useStore = create<AppState>((set, get) => ({
   currentUser: loadFromStorage('pc_user', null),
   partner: loadFromStorage('pc_partner', null),
   isAuthenticated: !!loadFromStorage('pc_user', null),
-  messages: loadFromStorage('pc_messages', []),
+  messages: [],
   connectionStatus: 'disconnected',
   theme: loadFromStorage('pc_theme', 'dark'),
   activeView: 'chat',
@@ -95,18 +96,17 @@ export const useStore = create<AppState>((set, get) => ({
   logout: () => {
     localStorage.removeItem('pc_user');
     localStorage.removeItem('pc_partner');
+    localStorage.removeItem('pc_token');
     set({ currentUser: null, partner: null, isAuthenticated: false, messages: [] });
   },
 
   addMessage: (msg) => {
     const messages = [...get().messages, msg];
-    saveToStorage('pc_messages', messages);
     set({ messages });
   },
 
   updateMessage: (id, updates) => {
     const messages = get().messages.map(m => m.id === id ? { ...m, ...updates } : m);
-    saveToStorage('pc_messages', messages);
     set({ messages });
   },
 
@@ -116,7 +116,6 @@ export const useStore = create<AppState>((set, get) => ({
       if (forAll) return { ...m, deleted: true, deletedForAll: true, text: '', attachments: [] };
       return m;
     }).filter(m => !forAll || m.id !== id || m.deletedForAll);
-    saveToStorage('pc_messages', messages);
     set({ messages });
   },
 
@@ -154,7 +153,6 @@ export const useStore = create<AppState>((set, get) => ({
       const readBy = m.readBy.includes(userId) ? m.readBy : [...m.readBy, userId];
       return { ...m, readBy };
     });
-    saveToStorage('pc_messages', messages);
     set({ messages });
   },
 
@@ -179,4 +177,7 @@ export const useStore = create<AppState>((set, get) => ({
     set({ currentUser: updated });
   },
   setSessions: (sessions) => set({ sessions }),
+  setMessages: (messages) => {
+    set({ messages });
+  },
 }));
