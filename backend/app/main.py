@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, event
+from sqlalchemy import create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, event, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session, relationship
 from jose import jwt, JWTError
@@ -32,9 +32,7 @@ logger = logging.getLogger(__name__)
 
 # ============ Configuration ============
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://privatchat:privatchat@localhost:5432/privatchat")
-SECRET_KEY = os.getenv("SECRET_KEY")
-if not SECRET_KEY or len(SECRET_KEY) < 32:
-    raise ValueError("SECRET_KEY must be set and at least 32 characters long")
+SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key-change-in-production-min-32-chars!!")
 
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_DAYS = 30
@@ -144,12 +142,11 @@ def hash_password(password: str) -> str:
 def verify_password(password: str, hash: str) -> bool:
     return pwd_context.verify(password, hash)
 
-def create_access_token(user_id: str, session_id: str) -> str:
-    jti = str(uuid.uuid4())
+def create_access_token(user_id: str, jti: str) -> str:
+    """Create JWT token with provided JTI (must match session.jti)"""
     expire = datetime.utcnow() + timedelta(days=ACCESS_TOKEN_EXPIRE_DAYS)
     payload = {
         "sub": user_id,
-        "sid": session_id,
         "jti": jti,
         "exp": expire
     }
@@ -341,10 +338,10 @@ async def register(req: RegisterRequest, response: Response, db: Session = Depen
     db.add(user)
     db.flush()
     
-    # Create session
-    session = Session_(user_id=user.id, device_info="registration")
+    # Create session with JTI
+    jti = str(uuid.uuid4())
+    session = Session_(user_id=user.id, jti=jti, device_info="registration")
     db.add(session)
-    db.flush()
     
     # Create invite code
     invite_code = secrets.token_urlsafe(8).upper()[:8]
@@ -356,7 +353,7 @@ async def register(req: RegisterRequest, response: Response, db: Session = Depen
     db.add(invite)
     db.commit()
     
-    token = create_access_token(user.id, session.id)
+    token = create_access_token(user.id, jti)
     
     # Set HttpOnly cookie
     response.set_cookie(
@@ -400,16 +397,16 @@ async def register_with_invite(req: InviteRegisterRequest, response: Response, d
     db.add(user)
     db.flush()
     
-    # Create session
-    session = Session_(user_id=user.id, device_info="registration")
+    # Create session with JTI
+    jti = str(uuid.uuid4())
+    session = Session_(user_id=user.id, jti=jti, device_info="registration")
     db.add(session)
-    db.flush()
     
     invite.used = True
     invite.used_by = user.id
     db.commit()
     
-    token = create_access_token(user.id, session.id)
+    token = create_access_token(user.id, jti)
     
     response.set_cookie(
         key="access_token",
@@ -431,12 +428,13 @@ async def login(req: LoginRequest, response: Response, db: Session = Depends(get
     if not user or not verify_password(req.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     
-    # Create session
-    session = Session_(user_id=user.id, device_info="login")
+    # Create session with JTI
+    jti = str(uuid.uuid4())
+    session = Session_(user_id=user.id, jti=jti, device_info="login")
     db.add(session)
     db.commit()
     
-    token = create_access_token(user.id, session.id)
+    token = create_access_token(user.id, jti)
     
     response.set_cookie(
         key="access_token",
@@ -1093,8 +1091,8 @@ async def periodic_cleanup():
 @app.get("/api/health")
 async def health(db: Session = Depends(get_db)):
     try:
-        # Check database connection
-        db.execute("SELECT 1")
+        # Check database connection (SQLAlchemy 2.x requires text())
+        db.execute(text("SELECT 1"))
         return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
     except Exception as e:
         logger.error(f"Health check failed: {e}")

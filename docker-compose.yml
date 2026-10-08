@@ -51,6 +51,8 @@ services:
       - backend
     networks:
       - internal
+    networks:
+      - internal
 
   nginx:
     image: nginx:alpine
