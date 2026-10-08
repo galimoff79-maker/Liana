@@ -1,207 +1,172 @@
 # Liana — Приватный мессенджер для двоих
 
-Production-ready приватный веб-мессенджер для двух пользователей. Поддержка iPhone, Android, Windows. PWA с push-уведомлениями.
+Приватный веб-мессенджер для общения двух людей через интернет. Работает на iPhone, Android и Windows.
 
 ---
 
-## ✅ Реализованные возможности
+## 🚀 Быстрый старт (3 шага)
 
-### Основной функционал
-- ✅ Real-time сообщения через WebSocket
-- ✅ Сообщения хранятся в PostgreSQL (source of truth)
-- ✅ Ответы на сообщения (reply)
-- ✅ Редактирование сообщений
-- ✅ Удаление (у себя / у обоих)
-- ✅ Реакции (❤️ 👍 😂 😮 😢 🔥 🎉)
-- ✅ Закрепление сообщений
-- ✅ Статусы: отправлено ✓ / доставлено ✓✓ / прочитано ✓✓
-- ✅ Индикатор "печатает..."
-- ✅ Online / Offline статус
-- ✅ Поиск по истории
+### Шаг 1: Установите необходимые программы
 
-### Медиа и файлы
-- ✅ Загрузка фотографий (серверное хранение)
-- ✅ Загрузка видео с streaming
-- ✅ Загрузка файлов (PDF, DOC, ZIP и др.)
-- ✅ Голосовые сообщения (iOS Safari совместимо)
-- ✅ Камера (мобильные устройства)
-- ✅ Полноэкранный просмотр изображений с zoom
-- ✅ Скачивание файлов
-- ✅ Автоматическое удаление старых файлов
+Скачайте и установите (если ещё не установлены):
 
-### Безопасность
-- ✅ Cookie-based auth (HttpOnly, Secure, SameSite)
-- ✅ Session management с возможностью отзыва
-- ✅ Безопасное хэширование паролей (bcrypt)
-- ✅ Invite-система (максимум 2 пользователя)
-- ✅ Файлы не публичны — проверка прав доступа
-- ✅ Защита от path traversal
-- ✅ MIME validation
-- ✅ Streaming file uploads (не загружает в RAM)
+1. **Python** — https://www.python.org/downloads/
+   - ⚠️ При установке ОБЯЗАТЕЛЬНО отметьте: **"Add Python to PATH"**
 
-### PWA и Push
-- ✅ Progressive Web App
-- ✅ Установка на домашний экран (iPhone/Android)
-- ✅ Push-уведомления (Web Push + VAPID)
-- ✅ Service Worker с кэшированием
-- ✅ Standalone mode
+2. **Node.js** — https://nodejs.org/
+   - Скачайте версию **LTS**
 
-### Интерфейс
-- ✅ Dark / Light / System тема
-- ✅ Responsive дизайн (mobile-first)
-- ✅ Оптимизация под iPhone (Safe Area, Dynamic Island)
-- ✅ Корректная работа с виртуальной клавиатурой
+### Шаг 2: Запустите установку
 
----
+Дважды кликните на файл:
 
-## 🚀 Быстрый старт (Development)
-
-### Требования
-- Python 3.11+
-- Node.js 20+
-- PostgreSQL 16+ (или Docker)
-
-### Автоматическая установка (Windows)
-
-```bash
+```
 setup.bat
 ```
 
-Этот скрипт:
-- Проверит Python, Node.js, Docker
-- Создаст `.env` файл
-- Установит зависимости backend и frontend
+Дождитесь окончания установки (2-5 минут).
 
-### Запуск
+### Шаг 3: Запустите Liana
 
-```bash
+Дважды кликните на файл:
+
+```
 start.bat
 ```
 
-Откроет два окна:
-- Backend: http://localhost:8000
-- Frontend: http://localhost:3000
+Откроется браузер с адресом: **http://localhost:3000**
 
-### Остановка
+---
 
-```bash
+## 📱 Как пользоваться
+
+### Первый пользователь
+
+1. Откройте http://localhost:3000
+2. Нажмите **"Создать аккаунт"**
+3. Заполните форму
+4. Система покажет **код-приглашение** — скопируйте его
+
+### Второй пользователь
+
+1. Откройте http://localhost:3000 на другом устройстве
+2. Нажмите **"Войти по коду-приглашению"**
+3. Введите код от первого пользователя
+4. Заполните форму
+
+### Готово!
+
+Теперь два человека могут общаться через Liana.
+
+---
+
+## 🛑 Остановка
+
+Чтобы остановить Liana, дважды кликните:
+
+```
 stop.bat
 ```
 
-### Ручная установка
+---
 
-#### 1. Backend
-```bash
-cd backend
-python -m venv venv
-venv\Scripts\activate  # Windows
-# source venv/bin/activate  # Linux/Mac
-pip install -r requirements.txt
+## 📋 Файлы проекта
 
-# Настроить .env
-cp ../.env.example .env
-# Отредактировать .env
-
-# Запустить
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-#### 2. Frontend
-```bash
-npm install
-npm run dev
-```
-
-#### 3. Открыть
-```
-http://localhost:3000
-```
+| Файл | Назначение |
+|------|-----------|
+| `setup.bat` | Установка (запустить один раз) |
+| `start.bat` | Запуск Liana |
+| `stop.bat` | Остановка Liana |
+| `setup.ps1` | PowerShell версия установки |
+| `start.ps1` | PowerShell версия запуска |
+| `stop.ps1` | PowerShell версия остановки |
 
 ---
 
-## 🐳 Docker (Production)
+## 🔧 Если что-то не работает
 
-### 1. Подготовка
-```bash
-cp .env.example .env
-```
+### Python не найден
 
-Отредактировать `.env`:
-```env
-SECRET_KEY=<сгенерировать: python -c "import secrets; print(secrets.token_urlsafe(64))">
-DB_PASSWORD=<надёжный_пароль>
-FRONTEND_URL=https://chat.example.com
-```
+**Ошибка:** `Python не найден`
 
-### 2. Запуск
-```bash
-docker compose up -d
-```
+**Решение:**
+1. Переустановите Python с https://www.python.org/downloads/
+2. При установке отметьте **"Add Python to PATH"**
+3. Перезагрузите компьютер
+4. Запустите `setup.bat` снова
 
-### 3. Проверка
-```bash
-docker compose ps
-docker compose logs -f backend
-```
+### Node.js не найден
+
+**Ошибка:** `Node.js не найден`
+
+**Решение:**
+1. Скачайте Node.js с https://nodejs.org/
+2. Установите версию LTS
+3. Перезагрузите компьютер
+4. Запустите `setup.bat` снова
+
+### Backend не запускается
+
+**Решение:**
+1. Проверьте файл `backend.log`
+2. Убедитесь что порт 8000 не занят
+3. Перезапустите `stop.bat` затем `start.bat`
+
+### Frontend не запускается
+
+**Решение:**
+1. Проверьте файл `frontend.log`
+2. Убедитесь что порт 3000 не занят
+3. Перезапустите `stop.bat` затем `start.bat`
 
 ---
 
-## 🌐 Деплой в Yandex Cloud
+## 🌐 Доступ из интернета (для iPhone)
 
-### Вариант 1: Serverless Containers + Managed PostgreSQL
+Чтобы открыть Liana на iPhone из другой сети, нужно опубликовать её в интернете.
 
-#### 1. Создать Managed PostgreSQL
-```bash
-yc managed-postgresql cluster create \
-  --name liana-db \
-  --environment production \
-  --network-name default \
-  --host-name liana-db \
-  --resource-preset s2.micro \
-  --disk-size 10GB \
-  --user-name liana \
-  --user-password <пароль>
-```
+### Вариант 1: Yandex Cloud (рекомендуется)
 
-#### 2. Создать Object Storage для файлов
-```bash
-yc storage bucket create --name liana-files
-```
+Следуйте инструкции в разделе **Деплой в Yandex Cloud** ниже.
 
-#### 3. Создать Serverless Container
-```bash
-yc serverless container create \
-  --name liana-backend \
-  --memory 512MB \
-  --execution-timeout 300s \
-  --concurrency 10
-```
+### Вариант 2: Ngrok (быстрый тест)
 
-#### 4. Деплой backend
-```bash
-yc serverless container revision deploy \
-  --container-name liana-backend \
-  --image cr.yandex/<registry-id>/liana-backend:latest \
-  --environment \
-    DATABASE_URL=postgresql://liana:<пароль>@liana-db:5432/liana,\
-    SECRET_KEY=<секрет>,\
-    FRONTEND_URL=https://chat.example.com
-```
+1. Скачайте ngrok: https://ngrok.com/download
+2. Запустите:
+   ```
+   ngrok http 3000
+   ```
+3. Получите публичную ссылку вида: `https://xxxx.ngrok.io`
+4. Откройте эту ссылку на iPhone
 
-#### 5. Настроить домен и HTTPS
-```bash
-yc certificate-manager certificate create \
-  --name liana-cert \
-  --domain chat.example.com
+⚠️ **Внимание:** Ngrok подходит только для тестирования. Для постоянного использования нужен Yandex Cloud.
 
-yc serverless container create-binding \
-  --container-name liana-backend \
-  --domain chat.example.com
-```
+---
 
-### Вариант 2: Compute VM (проще для начала)
+## 📱 Установка на iPhone
 
-#### 1. Создать VM
+1. Откройте Safari
+2. Перейдите по ссылке Liana (например: `https://chat.example.com`)
+3. Зарегистрируйтесь / войдите
+4. Нажмите кнопку **"Поделиться"** (⬆️)
+5. Выберите **"На экран Домой"**
+6. Подтвердите
+
+Теперь Liana работает как приложение на iPhone.
+
+---
+
+## 🗄 Деплой в Yandex Cloud
+
+### Что нужно
+
+- Аккаунт Yandex Cloud
+- Домен (например: `chat.example.com`)
+
+### Пошаговая инструкция
+
+#### 1. Создайте виртуальную машину
+
 ```bash
 yc compute instance create \
   --name liana-server \
@@ -209,226 +174,113 @@ yc compute instance create \
   --network-interface subnet-name=default-1a,nat-ip-version=ipv4 \
   --create-boot-disk image-folder-id=standard-images,image-family=ubuntu-2204-lts \
   --memory 2 \
-  --cores 2
+  --cores 2 \
+  --platform-id standard-v3
 ```
 
-#### 2. Подключиться и настроить
+#### 2. Подключитесь к серверу
+
 ```bash
-ssh user@<ip>
+ssh user@<IP-адрес-сервера>
+```
 
-# Установить Docker
+#### 3. Установите Docker
+
+```bash
 curl -fsSL https://get.docker.com | sh
+```
 
-# Клонировать проект
-git clone <repo>
+#### 4. Клонируйте проект
+
+```bash
+git clone <ваш-репозиторий>
 cd liana
+```
 
-# Настроить .env
+#### 5. Настройте окружение
+
+```bash
 cp .env.example .env
 nano .env
+```
 
-# Запустить
+Измените:
+```env
+SECRET_KEY=<сгенерируйте: python -c "import secrets; print(secrets.token_urlsafe(64))">
+FRONTEND_URL=https://chat.example.com
+```
+
+#### 6. Запустите Docker
+
+```bash
 docker compose up -d
 ```
 
-#### 3. Настроить домен
-- Направить A-запись `chat.example.com` на IP VM
-- Получить SSL сертификат:
+#### 7. Настройте домен
+
+- Направьте A-запись `chat.example.com` на IP сервера
+- Получите SSL сертификат:
+
 ```bash
 apt install certbot
 certbot certonly --standalone -d chat.example.com
 ```
 
----
+- Скопируйте сертификаты:
 
-## 📱 Установка на iPhone
-
-1. Открыть Safari → `https://chat.example.com`
-2. Зарегистрироваться / Войти
-3. Нажать кнопку «Поделиться» (⬆️)
-4. Выбрать «На экран «Домой»»
-5. Подтвердить
-
-### Push-уведомления на iPhone
-- Требуется iOS 16.4+
-- После добавления на экран: Настройки → ПриватЧат → Уведомления → Разрешить
-
----
-
-## 📱 Установка на Android
-
-1. Открыть Chrome → `https://chat.example.com`
-2. Зарегистрироваться / Войти
-3. Chrome предложит «Добавить на главный экран»
-4. Или: меню (⋮) → «Установить приложение»
-
----
-
-## 💻 Windows
-
-Просто открыть в браузере:
-```
-https://chat.example.com
-```
-
-Поддерживаются: Chrome, Edge, Firefox.
-
----
-
-## 🔔 Push-уведомления
-
-### Генерация VAPID ключей
 ```bash
-npx web-push generate-vapid-keys
+mkdir -p nginx/ssl
+cp /etc/letsencrypt/live/chat.example.com/fullchain.pem nginx/ssl/
+cp /etc/letsencrypt/live/chat.example.com/privkey.pem nginx/ssl/
 ```
 
-Добавить в `.env`:
-```env
-VAPID_PUBLIC_KEY=<public_key>
-VAPID_PRIVATE_KEY=<private_key>
-```
+- Перезапустите nginx:
 
----
-
-## 💾 Backup / Restore
-
-### Linux/Mac
 ```bash
-chmod +x scripts/backup.sh
-./scripts/backup.sh
-
-./scripts/restore.sh privatchat_backup_20240101_120000
+docker compose restart nginx
 ```
 
-### Windows
-```powershell
-.\scripts\backup.ps1
-.\scripts\restore.ps1 -BackupName "privatchat_backup_20240101_120000"
-```
+#### 8. Готово!
 
----
-
-## 🏗 Структура проекта
-
-```
-liana/
-├── backend/
-│   ├── app/
-│   │   └── main.py          # FastAPI приложение
-│   ├── alembic/
-│   │   └── versions/        # Миграции БД
-│   ├── tests/               # Тесты
-│   ├── Dockerfile
-│   └── requirements.txt
-├── src/                     # Frontend (React)
-│   ├── App.tsx
-│   ├── components/
-│   │   ├── AuthScreen.tsx
-│   │   ├── ChatView.tsx
-│   │   ├── MessageBubble.tsx
-│   │   ├── SettingsView.tsx
-│   │   └── MediaViewer.tsx
-│   ├── services/
-│   │   ├── api.ts           # API клиент
-│   │   ├── websocket.ts     # WebSocket сервис
-│   │   └── push.ts          # Push уведомления
-│   ├── stores/index.ts      # Zustand store
-│   └── types/index.ts
-├── public/
-│   ├── manifest.json        # PWA manifest
-│   ├── sw.js                # Service Worker
-│   └── icon.svg
-├── nginx/
-│   └── nginx.conf
-├── scripts/
-│   ├── backup.sh
-│   └── restore.sh
-├── docker-compose.yml
-├── .env.example
-├── setup.bat                # Автоматическая установка (Windows)
-├── start.bat                # Запуск (Windows)
-├── stop.bat                 # Остановка (Windows)
-└── README.md
-```
-
----
-
-## 🔧 Environment Variables
-
-| Переменная | Описание | По умолчанию |
-|---|---|---|
-| `DATABASE_URL` | PostgreSQL connection string | `postgresql://...` |
-| `SECRET_KEY` | JWT secret (обязательно менять!) | — |
-| `DB_PASSWORD` | Пароль PostgreSQL | — |
-| `VAPID_PUBLIC_KEY` | VAPID public key для push | — |
-| `VAPID_PRIVATE_KEY` | VAPID private key для push | — |
-| `UPLOAD_DIR` | Директория для файлов | `./uploads` |
-| `FILE_RETENTION_DAYS` | Хранение файлов (дни) | `30` |
-| `MAX_FILE_SIZE_MB` | Макс. размер файла | `500` |
-| `FRONTEND_URL` | URL фронтенда | `http://localhost:3000` |
+Откройте `https://chat.example.com` на iPhone.
 
 ---
 
 ## 🔒 Безопасность
 
-### Реализовано
 - ✅ HTTPS (обязательно для production)
-- ✅ Secure cookies (HttpOnly, SameSite, Secure)
-- ✅ CSRF protection
-- ✅ XSS protection (React по умолчанию + CSP)
-- ✅ SQL injection protection (SQLAlchemy ORM)
-- ✅ Rate limiting ready
-- ✅ Безопасное хэширование паролей (bcrypt)
-- ✅ Security headers
-- ✅ Content Security Policy
-- ✅ CORS
-- ✅ WebSocket authentication (cookie-based)
-- ✅ Проверка прав доступа к файлам
-- ✅ Проверка размера файлов
-- ✅ Проверка MIME типов
-- ✅ Защита от path traversal
-- ✅ Случайные имена файлов
-- ✅ Запрет исполнения загруженных файлов
-
-### Рекомендации
-- Менять `SECRET_KEY` перед production
-- Использовать надёжный пароль для PostgreSQL
-- Обновлять сертификаты Let's Encrypt
-- Регулярно делать backup
-- Обновлять зависимости
+- ✅ Безопасные cookies (HttpOnly, Secure, SameSite)
+- ✅ Хэширование паролей (bcrypt)
+- ✅ Защита от XSS, CSRF, SQL injection
+- ✅ Файлы не публичны
+- ✅ WebSocket authentication
 
 ---
 
-## 📋 Известные ограничения браузеров
+## 📦 Структура проекта
 
-### iOS Safari
-- Web Push работает только после добавления PWA на домашний экран (iOS 16.4+)
-- MediaRecorder имеет ограниченную поддержку (iOS 14.3+)
-- Нет фоновой работы WebSocket (при сворачивании)
-- Ограничение на размер загружаемых файлов (~500MB)
-
-### Android Chrome
-- Полная поддержка всех функций
-- Push работает без ограничений
-
-### Desktop (Chrome/Edge/Firefox)
-- Полная поддержка всех функций
-- Push работает через Service Worker
+```
+liana/
+├── backend/          # Python backend (FastAPI)
+├── src/              # React frontend
+├── public/           # PWA файлы
+├── nginx/            # Nginx конфигурация
+├── docker-compose.yml
+├── setup.bat         # Установка
+├── start.bat         # Запуск
+├── stop.bat          # Остановка
+└── README.md         # Эта инструкция
+```
 
 ---
 
-## 🔮 Планируемые улучшения (v2)
+## 🆘 Поддержка
 
-- End-to-End Encryption (E2EE)
-- Голосовые звонки (WebRTC)
-- Видеозвонки
-- Групповые чаты
-- Несколько чатов
-- Стикерпаки
-- GIF поиск
-- Исчезающие сообщения
-- Двухфакторная аутентификация
-- Экспорт истории чата
+Если возникли проблемы:
+
+1. Проверьте логи: `backend.log`, `frontend.log`, `setup.log`
+2. Убедитесь что Python и Node.js установлены правильно
+3. Попробуйте переустановить: `stop.bat` → `setup.bat` → `start.bat`
 
 ---
 

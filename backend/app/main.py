@@ -47,9 +47,38 @@ VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 # ============ Database ============
-engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_size=10)
+# Load .env file if it exists
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+# Re-read config after .env
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./liana.db")
+SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key-change-in-production-min-32-chars!!")
+UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "./uploads"))
+MAX_FILE_SIZE_MB = int(os.getenv("MAX_FILE_SIZE_MB", "500"))
+FILE_RETENTION_DAYS = int(os.getenv("FILE_RETENTION_DAYS", "30"))
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY", "")
+VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "")
+
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+# SQLite needs different settings than PostgreSQL
+if DATABASE_URL.startswith("sqlite"):
+    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+else:
+    engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_size=10)
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
+
+# Create tables if using SQLite (for development)
+if DATABASE_URL.startswith("sqlite"):
+    Base.metadata.create_all(bind=engine)
+    logger.info("SQLite database initialized")
 
 # ============ Models ============
 class User(Base):
