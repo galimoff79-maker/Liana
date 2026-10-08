@@ -125,6 +125,11 @@ if errorlevel 1 (
         echo.
         echo Проверьте лог: backend.log
         echo.
+        echo Возможные причины:
+        echo   - Порт 8000 занят другим приложением
+        echo   - Ошибка в конфигурации .env
+        echo   - Проблема с базой данных
+        echo.
         echo Нажмите любую клавишу для выхода...
         pause >nul
         exit /b 1
@@ -165,6 +170,10 @@ if errorlevel 1 (
         echo ОШИБКА: Frontend не отвечает.
         echo.
         echo Проверьте лог: frontend.log
+        echo.
+        echo Возможные причины:
+        echo   - Порт 3000 занят другим приложением
+        echo   - Ошибка сборки frontend
         echo.
         echo Нажмите любую клавишу для выхода...
         pause >nul

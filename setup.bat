@@ -73,7 +73,6 @@ if errorlevel 1 (
     exit /b 1
 )
 
-for /f "tokens=1 delims=v" %%v in ('node --version') do set NODEVER=%%v
 for /f "delims=v" %%v in ('node --version') do set NODEVER=%%v
 echo    Найдена версия: !NODEVER!
 echo    Версия Node.js: !NODEVER! >> "%LOGFILE%"
@@ -118,6 +117,11 @@ if not exist "venv" (
         echo ОШИБКА: Не удалось создать виртуальное окружение.
         echo Лог: %LOGFILE%
         echo.
+        echo Возможные причины:
+        echo   - Python установлен неправильно
+        echo   - Антивирус блокирует создание venv
+        echo   - Недостаточно прав
+        echo.
         echo Нажмите любую клавишу для выхода...
         pause >nul
         exit /b 1
@@ -135,6 +139,7 @@ echo [5/8] Установка зависимостей Backend...
 echo [5/8] Установка зависимостей Backend... >> "%LOGFILE%"
 
 call venv\Scripts\activate.bat
+pip install --upgrade pip >> "%LOGFILE%" 2>&1
 pip install -r requirements.txt >> "%LOGFILE%" 2>&1
 if errorlevel 1 (
     echo.
